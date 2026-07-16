@@ -1,0 +1,8 @@
+Quantity,Designators,Manufacturer Part Number,Description,Package,Manufacturer
+1,U1,PIC16F1459-I/SO,PIC16F1459,SOIC-20,Microchip Technology
+1,J1,USB4110-GF-A,USB-C 2.0 receptacle,GCT USB4110,GCT
+2,"RN1, RN2",746X101103JP,8x10k bussed resistor array,1206 10-pin bussed array,CTS Resistor Products
+2,"R1, R2",RC0402FR-075K1L,5.1k 1%,0402,Yageo
+1,C1,CC0402KRX7R7BB104,0.1uF 16V X7R,0402,Yageo
+1,C2,CC0402KRX7R6BB105,1uF 10V X7R,0402,Yageo
+1,C3,CC0402KRX5R5BB474,0.47uF 6.3V X5R,0402,Yageo

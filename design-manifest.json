@@ -1,0 +1,169 @@
+{
+  "product": "SwanSong USB",
+  "revision": "B",
+  "architecture": "PIC16F1459 crystal-free native USB, USB-C device",
+  "placements": 9,
+  "assembly_side": "Bottom only",
+  "button_inputs": {
+    "Y2": {
+      "former_module_pad": 6,
+      "pic_pin": 11
+    },
+    "Y1": {
+      "former_module_pad": 7,
+      "pic_pin": 12
+    },
+    "Y4": {
+      "former_module_pad": 10,
+      "pic_pin": 3
+    },
+    "Y3": {
+      "former_module_pad": 11,
+      "pic_pin": 5
+    },
+    "X1": {
+      "former_module_pad": 12,
+      "pic_pin": 7
+    },
+    "X2": {
+      "former_module_pad": 13,
+      "pic_pin": 9
+    },
+    "X4": {
+      "former_module_pad": 14,
+      "pic_pin": 10
+    },
+    "X3": {
+      "former_module_pad": 15,
+      "pic_pin": 8
+    },
+    "SOUND": {
+      "former_module_pad": 16,
+      "pic_pin": 6
+    },
+    "START": {
+      "former_module_pad": 17,
+      "pic_pin": 13
+    },
+    "POWER": {
+      "former_module_pad": 18,
+      "pic_pin": 14
+    },
+    "B": {
+      "former_module_pad": 19,
+      "pic_pin": 15
+    },
+    "A": {
+      "former_module_pad": 20,
+      "pic_pin": 16
+    }
+  },
+  "top_routes": {
+    "VBUS": [
+      [
+        4.56,
+        5.11
+      ],
+      [
+        4.56,
+        5.165
+      ],
+      [
+        4.6125,
+        5.2175
+      ],
+      [
+        4.6125,
+        5.2425
+      ],
+      [
+        4.5425,
+        5.3125
+      ],
+      [
+        4.2575,
+        5.3125
+      ],
+      [
+        4.24,
+        5.295
+      ]
+    ],
+    "CC1": [
+      [
+        4.32,
+        4.88
+      ],
+      [
+        4.26,
+        4.88
+      ]
+    ],
+    "USB_DM": [
+      [
+        4.65,
+        5.395
+      ],
+      [
+        4.65,
+        5.0225
+      ],
+      [
+        4.5,
+        4.8725
+      ],
+      [
+        4.5,
+        4.872027559055119
+      ]
+    ],
+    "USB_DP": [
+      [
+        4.63,
+        5.345
+      ],
+      [
+        4.63,
+        5.0275
+      ],
+      [
+        4.4825,
+        4.88
+      ],
+      [
+        4.4825,
+        4.825
+      ],
+      [
+        4.495,
+        4.8125
+      ],
+      [
+        4.52,
+        4.8125
+      ],
+      [
+        4.52,
+        4.85234251968504
+      ]
+    ],
+    "X3": [
+      [
+        4.1825,
+        5.215
+      ],
+      [
+        4.1825,
+        5.2725
+      ],
+      [
+        4.24,
+        5.33
+      ],
+      [
+        4.24,
+        5.645
+      ]
+    ]
+  }
+}
