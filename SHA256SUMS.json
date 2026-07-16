@@ -6,11 +6,11 @@
   "Gerber_BottomPasteMaskLayer.GBP": "b7c2b4a6948c06bd8aec4ffde627f6e61fdebe94fc536653b5ab26f3103efb0a",
   "Gerber_BottomSilkscreenLayer.GBO": "ea8306fce269bb9a7ebfb5039b6b459707547331d52e8ce7209fd70dd77f4e68",
   "Gerber_BottomSolderMaskLayer.GBS": "3be989d9237141ba081517928e3916c73a329918348fc6398cbd9dbd5df76569",
-  "Gerber_TopLayer.GTL": "eb61b4a65788f59e9ce212b22b4d5318e41d640f6abbc35be2969caeb7ade740",
+  "Gerber_TopLayer.GTL": "7b08d7091e7a9aae8801ff18e57f36efc71e3afeaf5d7d88c1b5c4ba5a63cdd0",
   "Gerber_TopPasteMaskLayer.GTP": "e35f61c511a039b5d99bfc5332b18b44caf6ebc15dab3fccd516e8731d05de9d",
   "Gerber_TopSilkscreenLayer.GTO": "a7dcb51c8ddae5ad612055d4b2367b67a848cf4f9adf45b1230e4082c78f5467",
   "Gerber_TopSolderMaskLayer.GTS": "70c028a65d135477169d9d0f441c9342c87d26cfa1a77334926fb31a454ef8e7",
   "swansong-usb-bom.csv": "a788ad20a34c70dd7a0ff816b116e205827743315f11fb592348b13c297a3a62",
-  "swansong-usb-gerbers.zip": "e66939a43026c62b579b55c926f684ba940a59f9dc042ceb269d66c2f1437dc1",
+  "swansong-usb-gerbers.zip": "73bc22e2748c1391b6589b2b197b36fafeff19d6772d40650cd61d4ede87aa4f",
   "swansong-usb.XYRS": "e25a811ca3c354fea17cba1ec2415c95d9c88cd9d957e2930bfcbfe5c4708d37"
 }

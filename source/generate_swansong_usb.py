@@ -59,6 +59,14 @@ TAG_CX = 4.00
 TAG_CY = 5.90
 REVISION = "D"
 
+# The new top-layer routing keepouts split the original ground pour at this
+# diagonal neck. Gerber coordinate rounding otherwise leaves two fragments
+# only 0.679 mil apart, which MacroFab reports as an outer-copper spacing
+# violation even though both fragments are GND. A short 5 mil bridge restores
+# the original ground connection while remaining more than 10 mil from every
+# unrelated copper feature.
+TOP_GROUND_BRIDGE = [(2.17836, 4.74072), (2.17884, 4.74120)]
+
 # The WonderSwan Color exposes its accessory connector on the right side of the
 # shell.  The preserved controller outline has the matching rectangular recess
 # from X=4.720 in to the outer edge and Y=4.455..5.230 in.  Keep the USB-C
@@ -124,6 +132,18 @@ def round_pad(ref, number, net, x, y, diameter_mm, **kwargs):
 
 def line_shape(points: list[tuple[float, float]], width=TRACE_W):
     return LineString(points).buffer(width / 2, resolution=12, cap_style=1, join_style=1)
+
+
+def minimum_component_spacing(shape):
+    """Return the smallest positive gap between disconnected copper islands."""
+    components = list(shape.geoms) if shape.geom_type == "MultiPolygon" else [shape]
+    best = math.inf
+    for index, left in enumerate(components):
+        for right in components[index + 1:]:
+            distance = left.distance(right)
+            if 1e-9 < distance < best:
+                best = distance
+    return best
 
 
 def circle_shape(x, y, diameter):
@@ -1762,7 +1782,10 @@ def write_outputs(design):
         ],
     ]).buffer(0)
     base_top = load_layer(BASE / "Gerber_TopLayer.GTL")
-    final_top = base_top.difference(top_clear).union(top_dark).buffer(0)
+    # Reconnect two fragments of the original GND pour that otherwise finish
+    # only 0.679 mil apart after the new routing clearances are applied.
+    top_ground_bridge = line_shape(TOP_GROUND_BRIDGE)
+    final_top = base_top.difference(top_clear).union(top_dark).union(top_ground_bridge).buffer(0)
     write_positive_layer(OUT / "Gerber_TopLayer.GTL", "Top Copper", final_top)
     written_top = load_layer(OUT / "Gerber_TopLayer.GTL")
     top_roundtrip_error = written_top.symmetric_difference(final_top).area
@@ -1771,6 +1794,20 @@ def write_outputs(design):
             f"Flattened top copper changed during Gerber serialization: "
             f"{top_roundtrip_error:.8f} square inch"
         )
+
+    # Audit the serialized artwork itself. Net-level validation alone cannot
+    # catch near-touching fragments of the same source pour, but MacroFab's DRC
+    # measures every disconnected feature in the imported Gerber.
+    for layer_name, written_shape in (
+        ("Top Copper", written_top),
+        ("Bottom Copper", written_bottom),
+    ):
+        spacing = minimum_component_spacing(written_shape)
+        if spacing + 1e-6 < CLEARANCE:
+            raise ValueError(
+                f"{layer_name} serialized component spacing is "
+                f"{spacing * 1000:.3f} mil; {CLEARANCE * 1000:.1f} mil required"
+            )
 
     # Solder masks: retire all old RP2040/module pads and the SNES level shifter.
     mask_shapes = []
