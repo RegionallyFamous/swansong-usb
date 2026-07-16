@@ -1491,7 +1491,22 @@ def write_outputs(design):
         shape for net, shape in design["bottom_nets"].items() if net != "GND"
     ])
     bottom_clear = central_clear.union(bottom_non_ground.buffer(CLEARANCE + 0.0002)).union(edge_keepout).buffer(0)
-    append_overlay(BASE / "Gerber_BottomLayer.GBL", OUT / "Gerber_BottomLayer.GBL", bottom_clear, bottom_dark)
+    # Emit flattened positive copper instead of appending a large clear-polarity
+    # ring around the board edge. A Gerber hole inside a clear region must switch
+    # back to dark polarity; in the old overlay that re-darkened the ring's huge
+    # board-interior hole and created real unwanted copper near the outline.
+    # Flattening performs the subtraction geometrically and emits only the final
+    # intended artwork, so MacroFab sees the full 16 mil edge setback directly.
+    base_bottom = load_layer(BASE / "Gerber_BottomLayer.GBL")
+    final_bottom = base_bottom.difference(bottom_clear).union(bottom_dark).buffer(0)
+    write_positive_layer(OUT / "Gerber_BottomLayer.GBL", "Bottom Copper", final_bottom)
+    written_bottom = load_layer(OUT / "Gerber_BottomLayer.GBL")
+    bottom_roundtrip_error = written_bottom.symmetric_difference(final_bottom).area
+    if bottom_roundtrip_error > 0.0001:
+        raise ValueError(
+            f"Flattened bottom copper changed during Gerber serialization: "
+            f"{bottom_roundtrip_error:.8f} square inch"
+        )
 
     top_clear = unary_union([
         edge_keepout,
@@ -1503,7 +1518,16 @@ def write_outputs(design):
             if net != "GND"
         ],
     ]).buffer(0)
-    append_overlay(BASE / "Gerber_TopLayer.GTL", OUT / "Gerber_TopLayer.GTL", top_clear, top_dark)
+    base_top = load_layer(BASE / "Gerber_TopLayer.GTL")
+    final_top = base_top.difference(top_clear).union(top_dark).buffer(0)
+    write_positive_layer(OUT / "Gerber_TopLayer.GTL", "Top Copper", final_top)
+    written_top = load_layer(OUT / "Gerber_TopLayer.GTL")
+    top_roundtrip_error = written_top.symmetric_difference(final_top).area
+    if top_roundtrip_error > 0.0001:
+        raise ValueError(
+            f"Flattened top copper changed during Gerber serialization: "
+            f"{top_roundtrip_error:.8f} square inch"
+        )
 
     # Solder masks: retire all old RP2040/module pads and the SNES level shifter.
     mask_shapes = []

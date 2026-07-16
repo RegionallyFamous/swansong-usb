@@ -20,6 +20,8 @@ PIC16F1459 SOIC circuit that MacroFab can source, program, and assemble.
 - MacroFab Standard rules: 10 mil minimum plated drill, 5 mil trace/spacing,
   and a conservative 16 mil copper keepout from the outer route and all nine
   preserved non-plated mechanical-hole edges
+- Top and bottom copper are emitted as flattened final artwork; no board-edge
+  clear-polarity overlay is left for the factory DRC to reinterpret
 - Stocked GCT `USB4085-GF-A` connector has no plastic locating pegs; its 16
   contacts and four shell stakes are ordinary plated holes
 - Exposed VPP, PGC/B, and PGD/A factory-programming contacts
