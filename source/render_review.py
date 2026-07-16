@@ -139,11 +139,11 @@ def main() -> None:
     OUTPUT.mkdir(parents=True, exist_ok=True)
     common = ["Drill_PTH_Through.DRL", "Drill_NPTH_Through.DRL", "Gerber_BoardOutlineLayer.GKO"]
     render(
-        "top-rev-c.png",
+        "top-rev-d.png",
         ["Gerber_TopLayer.GTL", "Gerber_TopSolderMaskLayer.GTS", "Gerber_TopSilkscreenLayer.GTO", *common],
     )
     render(
-        "bottom-rev-c.png",
+        "bottom-rev-d.png",
         ["Gerber_BottomLayer.GBL", "Gerber_BottomSolderMaskLayer.GBS", "Gerber_BottomSilkscreenLayer.GBO", *common],
     )
     render_alignment()

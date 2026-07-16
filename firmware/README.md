@@ -1,7 +1,7 @@
 # SwanSong USB firmware
 
 This is a crystal-free, full-speed USB HID gamepad firmware for the
-PIC16F1459-I/SO on SwanSong USB Rev C.
+PIC16F1459-I/SO on SwanSong USB Rev D.
 
 ## Controls
 

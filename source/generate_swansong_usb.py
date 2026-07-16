@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from shapely.affinity import scale as scale_geometry
 from shapely.geometry import LineString, Point, Polygon, box
 from shapely.ops import unary_union
 
@@ -52,6 +53,11 @@ USB_REAR_SHELL_DRILL = 2.20 / 25.4
 USB_REAR_SHELL_PAD = 2.46 / 25.4
 USB_FRONT_SHELL_DRILL = 1.55 / 25.4
 USB_FRONT_SHELL_PAD = 1.81 / 25.4
+TAG_CONTACT_DIAMETER = 0.0310
+TAG_ALIGNMENT_DRILL = 0.0390
+TAG_CX = 4.00
+TAG_CY = 5.90
+REVISION = "D"
 
 # The WonderSwan Color exposes its accessory connector on the right side of the
 # shell.  The preserved controller outline has the matching rectangular recess
@@ -265,6 +271,56 @@ def connector_pads(cy=USB_CY):
     return result
 
 
+def tag_connect_pads(cx=TAG_CX, cy=TAG_CY):
+    """Bottom-side TC2030-PKT-NL / TC2030-MCP-NL ICSP footprint.
+
+    Tag-Connect specifies a 2x3, 1.27 mm contact array plus three asymmetric
+    0.991 mm alignment holes. The vendor drawing is a top-side view. Mirroring
+    the X offsets here makes the pin numbering read correctly when the finished
+    board is viewed from its bottom/programming side: pin 1 is lower-left and
+    pin 6 is upper-right. The contact pads intentionally have no paste and the
+    footprint is DNL, so it adds no component or assembly operation.
+    """
+    nets = {
+        1: "MCLR",
+        2: "VBUS",
+        3: "GND",
+        4: "A",       # PIC16F1459 ICSPDAT / PGD on RC0
+        5: "B",       # PIC16F1459 ICSPCLK / PGC on RC1
+        6: "NC_TC1_6",
+    }
+    positions = {
+        1: (cx + 0.050, cy - 0.025),
+        2: (cx + 0.050, cy + 0.025),
+        3: (cx, cy - 0.025),
+        4: (cx, cy + 0.025),
+        5: (cx - 0.050, cy - 0.025),
+        6: (cx - 0.050, cy + 0.025),
+    }
+    contacts = [
+        Pad(
+            "TC1", str(pin), nets[pin], x, y,
+            TAG_CONTACT_DIAMETER, TAG_CONTACT_DIAMETER,
+            paste=False, mask=True, round=True,
+        )
+        for pin, (x, y) in positions.items()
+    ]
+    alignment_holes = [
+        (cx + 0.100, cy),
+        (cx - 0.100, cy - 0.040),
+        (cx - 0.100, cy + 0.040),
+    ]
+    hole_masks = [
+        Pad(
+            "TC1H", str(index), "", x, y,
+            TAG_ALIGNMENT_DRILL, TAG_ALIGNMENT_DRILL,
+            paste=False, mask=True, round=True, through_hole=True,
+        )
+        for index, (x, y) in enumerate(alignment_holes, start=1)
+    ]
+    return contacts, hole_masks, alignment_holes
+
+
 def resistor_array_pads(ref="RN1", cx=3.93, cy=5.52):
     """CTS 746X101, rotated 90 degrees, using the vendor land pattern.
 
@@ -466,6 +522,12 @@ def text_shape(text: str, x: float, y: float, pixel_mm: float, align="left"):
     return unary_union(shapes) if shapes else Polygon()
 
 
+def bottom_text_shape(text: str, x: float, y: float, pixel_mm: float, align="left"):
+    """Mirror text artwork so it reads normally from the physical bottom."""
+    shape = text_shape(text, x, y, pixel_mm, align)
+    return scale_geometry(shape, xfact=-1, yfact=1, origin="center")
+
+
 def assign_pad_nets(pads, assignments):
     result = []
     for pad in pads:
@@ -484,6 +546,7 @@ def build_design():
     connector = connector_pads()
     resistor_array_1 = resistor_array_pads("RN1", 3.93, 5.60)
     resistor_array_2 = resistor_array_pads("RN2", 4.28, 4.96)
+    tag_contacts, tag_hole_masks, tag_alignment_holes = tag_connect_pads()
 
     # Assign each contact to the nearest available GPIO while reserving the
     # PIC's native USB/power pins.  The four bottom-right controls escape under
@@ -539,6 +602,8 @@ def build_design():
     all_pads.extend(assign_pad_nets(connector, pad_assignments))
     all_pads.extend(assign_pad_nets(resistor_array_1, pad_assignments))
     all_pads.extend(assign_pad_nets(resistor_array_2, pad_assignments))
+    all_pads.extend(tag_contacts)
+    all_pads.extend(tag_hole_masks)
 
     # 0402 passives; all are ordinary distributor-stock parts.  The USB-C CC
     # pull-downs live above/below the connector so the data pair stays short.
@@ -575,6 +640,56 @@ def build_design():
         nets.setdefault(net, []).append(line_shape(points, width))
 
     route("MCLR", [(pic[4].x, pic[4].y), (4.10, pic[4].y), (4.075, 5.42), (4.04, 5.42)])
+
+    # Each Tag-Connect signal escapes directly away from the vendor keepout to
+    # a plated via. The longer programming branches run on top, below the
+    # bottom-side connector, so they cannot congest or cut the button fanout.
+    tag_programming_vias = {
+        "MCLR": (TAG_CX + 0.030, TAG_CY - 0.060),
+        "GND": (pad_map[("TC1", "3")].x, TAG_CY - 0.085),
+        "A": (pad_map[("TC1", "4")].x, TAG_CY + 0.085),
+        "B": (pad_map[("TC1", "5")].x, TAG_CY - 0.085),
+    }
+    tag_escape_shapes = {}
+    for pin, net in ((1, "MCLR"), (4, "A"), (5, "B")):
+        pad = pad_map[("TC1", str(pin))]
+        via = tag_programming_vias[net]
+        via_shape = circle_shape(*via, SMALL_VIA_PAD)
+        escape_shape = line_shape([(pad.x, pad.y), via])
+        nets.setdefault(net, []).extend([via_shape, escape_shape])
+        tag_escape_shapes[net] = unary_union([pad.shape, via_shape, escape_shape]).buffer(0)
+    # B's original endpoint sits below a preserved top-copper barrier. Add a
+    # short controller-side transition in the cleared module bay so the ICSP
+    # clock branch never has to cross that barrier.
+    tag_b_target_via = (4.65, 5.56)
+    tag_b_target_shape = unary_union([
+        circle_shape(*tag_b_target_via, SMALL_VIA_PAD),
+        line_shape([(pic[15].x, pic[15].y), tag_b_target_via]),
+    ]).buffer(0)
+    nets.setdefault("B", []).append(tag_b_target_shape)
+    tag_escape_shapes["B"] = unary_union([
+        tag_escape_shapes["B"], tag_b_target_shape,
+    ]).buffer(0)
+    tag_vbus_pad = pad_map[("TC1", "2")]
+    tag_vbus_path = [
+        (tag_vbus_pad.x, tag_vbus_pad.y),
+        (tag_vbus_pad.x, 5.945),
+        (4.035, 5.960),
+        (4.035, 6.015),
+        (3.80, 6.015),
+        (3.80, pad_map[("RN1", "1")].y),
+        (3.75, pad_map[("RN1", "1")].y),
+    ]
+    tag_vbus_shape = line_shape(tag_vbus_path, 0.008)
+    nets.setdefault("VBUS", []).append(tag_vbus_shape)
+    tag_escape_shapes["VBUS"] = unary_union([
+        tag_vbus_pad.shape, tag_vbus_shape,
+    ]).buffer(0)
+    tag_ground_pad = pad_map[("TC1", "3")]
+    tag_ground_via = tag_programming_vias["GND"]
+    nets.setdefault("GND", []).append(circle_shape(*tag_ground_via, VIA_PAD))
+    route("GND", [(tag_ground_pad.x, tag_ground_pad.y), tag_ground_via])
+    tag_mclr_target_via = (4.04, 5.42)
 
     # The USB4085 contacts are plated through-holes. Join each reversible D+/D-
     # pair on top, using only one ordinary via beside the PIC for each signal.
@@ -689,8 +804,14 @@ def build_design():
     fixed_blocked = fixed_blocked.union(box(4.735, 5.315, 5.035, 5.825))
     pad_obstacles = {
         net: unary_union([
-            p.shape for p in all_pads
-            if p.net != net and p.net not in {"NC", "SPARE"}
+            *[
+                p.shape for p in all_pads
+                if p.net != net and p.net not in {"NC", "SPARE"}
+            ],
+            *[
+                shape for other_net, shape in tag_escape_shapes.items()
+                if other_net != net
+            ],
         ]).buffer(CLEARANCE + TRACE_W / 2)
         for net in control_by_net
     }
@@ -927,6 +1048,7 @@ def build_design():
         (4.60, 5.30),    # controller pin-20 ground pocket
         (4.45, 5.80),
         (4.44, 5.60),    # main controller-side ground pour
+        tag_ground_via,   # TC1 ICSP ground return
     ]
     c1_gnd = next(p for p in all_pads if p.ref == "C1" and p.net == "GND")
     c2_gnd = next(p for p in all_pads if p.ref == "C2" and p.net == "GND")
@@ -984,14 +1106,21 @@ def build_design():
     existing_a = component_for_point(base_top, (4.67, 5.18), tolerance=0.001)
     if existing_a is None:
         raise RuntimeError("Unable to identify original A-button top-copper component")
+    existing_b = component_for_point(
+        base_top, (endpoints[19].x, endpoints[19].y), tolerance=0.005
+    )
+    if existing_b is None:
+        raise RuntimeError("Unable to identify original B-button top-copper component")
     a_keep_box = box(4.60, 4.00, 5.05, 4.52)
     retained_a = existing_a.intersection(a_keep_box).buffer(0)
     a_repurpose_clear = existing_a.difference(retained_a).buffer(0.0010)
+    retained_b = existing_b.difference(top_repurpose_clear).buffer(0)
     signal_copper = unary_union([
         component for component in components
         if component is not ground_component
         and not component.equals(existing_x3)
         and not component.equals(existing_a)
+        and not component.equals(existing_b)
     ]).difference(top_repurpose_clear).buffer(0)
     retained_x3 = existing_x3.difference(top_repurpose_clear).buffer(0)
     a_top_shape = unary_union([
@@ -999,10 +1128,15 @@ def build_design():
         circle_shape(*a_button_via, SMALL_VIA_PAD),
         circle_shape(endpoints[20].x, endpoints[20].y, SMALL_VIA_PAD),
     ]).buffer(0)
+    b_top_shape = unary_union([
+        retained_b,
+        circle_shape(endpoints[19].x, endpoints[19].y, SMALL_VIA_PAD),
+    ]).buffer(0)
     vbus_top_blocked = unary_union([
         signal_copper.buffer(CLEARANCE + VIA_PAD / 2),
-        retained_x3.buffer(CLEARANCE + TRACE_W / 2),
-        a_top_shape.buffer(CLEARANCE + TRACE_W / 2),
+        retained_x3.buffer(CLEARANCE + 0.010 / 2),
+        a_top_shape.buffer(CLEARANCE + 0.010 / 2),
+        b_top_shape.buffer(CLEARANCE + 0.010 / 2),
     ])
     top_vbus_path = astar_path(
         signal_vias[0], signal_vias[1], vbus_top_blocked,
@@ -1014,6 +1148,7 @@ def build_design():
             j1_top_pads.setdefault(pad.net, []).append(pad.shape)
     top_nets = {
         "A": a_top_shape,
+        "B": b_top_shape,
         "VBUS": unary_union([
             line_shape(top_vbus_path, 0.010),
             *[circle_shape(x, y, VIA_PAD) for x, y in signal_vias],
@@ -1026,6 +1161,109 @@ def build_design():
     }
     top_nets["NC_A8"] = unary_union(j1_top_pads["NC_A8"]).buffer(0)
     top_nets["NC_B8"] = unary_union(j1_top_pads["NC_B8"]).buffer(0)
+
+    # Preserve the original X3 transition before allocating the remaining top
+    # corridors to the programming and USB-C branches.
+    retained_x3 = component_for_point(
+        retained_x3.difference(top_nets["VBUS"].buffer(CLEARANCE + 0.0003)).buffer(0),
+        x3_vias[0],
+        tolerance=0.001,
+    )
+    if retained_x3 is None:
+        raise RuntimeError("VBUS clearance unexpectedly severed the retained X3 button trace")
+    top_blocked = unary_union([
+        signal_copper.buffer(CLEARANCE + TRACE_W / 2),
+        *[shape.buffer(CLEARANCE + TRACE_W / 2) for shape in top_nets.values()],
+    ])
+    top_x3_path = astar_path(
+        x3_vias[0], x3_vias[1], top_blocked,
+        (3.80, 4.90, 4.72, 5.90), step=0.0025,
+    )
+    top_nets["X3"] = unary_union([
+        retained_x3,
+        line_shape(top_x3_path),
+        *[circle_shape(x, y, SMALL_VIA_PAD) for x, y in x3_vias],
+    ]).buffer(0)
+
+    # Give the three top-side TC1 branches first choice of the non-USB routing
+    # corridors. A/B terminate at plated controller-side hits and MCLR lands in
+    # the VPP pogo pad. VBUS uses the open bottom-left supply corridor instead.
+    # The USB and CC routers below then treat these branches as obstacles.
+    tag_top_targets = {
+        "MCLR": tag_mclr_target_via,
+        "A": (endpoints[20].x, endpoints[20].y),
+        "B": tag_b_target_via,
+    }
+    for net in ("A", "B"):
+        top_nets[net] = unary_union([
+            top_nets[net],
+            circle_shape(*tag_programming_vias[net], SMALL_VIA_PAD),
+        ]).buffer(0)
+    top_nets["B"] = unary_union([
+        top_nets["B"], circle_shape(*tag_b_target_via, SMALL_VIA_PAD),
+    ]).buffer(0)
+    top_nets["GND"] = unary_union([
+        top_nets["GND"], circle_shape(*tag_ground_via, VIA_PAD),
+    ]).buffer(0)
+    top_nets["MCLR"] = unary_union([
+        circle_shape(*tag_programming_vias["MCLR"], SMALL_VIA_PAD),
+        circle_shape(*tag_mclr_target_via, SMALL_VIA_PAD),
+    ]).buffer(0)
+
+    all_npth_holes = [
+        *read_excellon_holes(BASE / "Drill_NPTH_Through.DRL"),
+        *[(x, y, TAG_ALIGNMENT_DRILL) for x, y in tag_alignment_holes],
+    ]
+    top_hole_keepout = unary_union([
+        circle_shape(
+            x, y,
+            diameter + 2 * (EDGE_COPPER_CLEARANCE + TRACE_W / 2),
+        )
+        for x, y, diameter in all_npth_holes
+    ]).buffer(0)
+    tag_top_paths = None
+    tag_top_failures = []
+    tag_orders = [
+        ("MCLR", "A", "B"),
+        ("A", "B", "MCLR"),
+        ("B", "A", "MCLR"),
+        ("A", "MCLR", "B"),
+        ("B", "MCLR", "A"),
+        ("MCLR", "B", "A"),
+    ]
+    for order in tag_orders:
+        trial_nets = dict(top_nets)
+        trial_paths = {}
+        try:
+            for net in order:
+                blocked = unary_union([
+                    signal_copper.buffer(CLEARANCE + TRACE_W / 2),
+                    top_hole_keepout,
+                    *[
+                        shape.buffer(CLEARANCE + TRACE_W / 2)
+                        for other_net, shape in trial_nets.items()
+                        if other_net != net
+                    ],
+                ]).buffer(0)
+                path = astar_path(
+                    tag_programming_vias[net], tag_top_targets[net], blocked,
+                    (3.80, 5.10, 4.72, 6.02), step=0.0025,
+                )
+                trial_paths[net] = path
+                trial_nets[net] = unary_union([
+                    trial_nets[net], line_shape(path),
+                ]).buffer(0)
+        except RuntimeError as exc:
+            tag_top_failures.append(f"{'/'.join(order)}: {exc}")
+            continue
+        tag_top_paths = trial_paths
+        top_nets = trial_nets
+        break
+    if tag_top_paths is None:
+        raise RuntimeError(
+            "Unable to complete Tag-Connect top-layer fanout; "
+            + "; ".join(tag_top_failures)
+        )
 
     cc_top_info = {
         "CC1": {"contact": cc1_vias[0], "via": cc1_vias[1]},
@@ -1164,26 +1402,7 @@ def build_design():
     top_dm_path = usb_data_paths["USB_DM"]
     top_dp_path = usb_data_paths["USB_DP"]
     top_nets.update(usb_data_shapes)
-    retained_x3 = component_for_point(
-        retained_x3.difference(top_nets["VBUS"].buffer(CLEARANCE + 0.0003)).buffer(0),
-        x3_vias[0],
-        tolerance=0.001,
-    )
-    if retained_x3 is None:
-        raise RuntimeError("VBUS clearance unexpectedly severed the retained X3 button trace")
-    top_blocked = unary_union([
-        signal_copper.buffer(CLEARANCE + TRACE_W / 2),
-        *[shape.buffer(CLEARANCE + TRACE_W / 2) for shape in top_nets.values()],
-    ])
-    top_x3_path = astar_path(
-        x3_vias[0], x3_vias[1], top_blocked,
-        (3.80, 4.90, 4.72, 5.90), step=0.0025,
-    )
-    top_nets["X3"] = unary_union([
-        retained_x3,
-        line_shape(top_x3_path),
-        *[circle_shape(x, y, SMALL_VIA_PAD) for x, y in x3_vias],
-    ]).buffer(0)
+
     top_paths = {
         "VBUS": top_vbus_path,
         "CC1": cc_top_paths["CC1"],
@@ -1191,6 +1410,9 @@ def build_design():
         "USB_DM": top_dm_path,
         "USB_DP": [*top_dp_path, *dp_vias[1:]],
         "X3": top_x3_path,
+        "TC1_MCLR": tag_top_paths["MCLR"],
+        "TC1_PGD": tag_top_paths["A"],
+        "TC1_PGC": tag_top_paths["B"],
     }
 
     placements = [
@@ -1208,6 +1430,12 @@ def build_design():
     small_vias = [
         dm_vias[0], dp_vias[0], cc1_vias[1], cc2_vias[1],
         a_button_via, *x3_vias,
+        *[
+            via for net, via in tag_programming_vias.items()
+            if net != "GND"
+        ],
+        tag_mclr_target_via,
+        tag_b_target_via,
     ]
     j1_pin_holes = [
         (pad.x, pad.y) for pad in all_pads
@@ -1242,6 +1470,12 @@ def build_design():
         "x3_vias": x3_vias,
         "endpoint_vias": endpoint_vias,
         "ground_vias": ground_vias,
+        "tag_alignment_holes": tag_alignment_holes,
+        "tag_programming_vias": tag_programming_vias,
+        "tag_mclr_target_via": tag_mclr_target_via,
+        "tag_b_target_via": tag_b_target_via,
+        "tag_top_paths": tag_top_paths,
+        "tag_vbus_path": tag_vbus_path,
         "controls": controls,
         "control_paths": control_paths,
         "pullup_paths": pullup_paths,
@@ -1319,7 +1553,10 @@ def validate_design(design):
     # VBUS is the one deliberate exception: its two bottom components are
     # joined by the validated top trace and plated through-vias.
     for net, shape in design["bottom_nets"].items():
-        if net in {"VBUS", "USB_DM", "USB_DP", "CC1", "CC2", "X3", "GND"}:
+        if net in {
+            "VBUS", "USB_DM", "USB_DP", "CC1", "CC2", "X3", "GND",
+            "MCLR", "A", "B",
+        }:
             continue
         components = list(shape.geoms) if shape.geom_type == "MultiPolygon" else [shape]
         if len([component for component in components if not component.is_empty]) != 1:
@@ -1471,7 +1708,13 @@ def write_outputs(design):
     # MacroFab may treat NPTH drills as internal routed edges. Clear copper from
     # every preserved mechanical hole as well as from the outside route so the
     # uploaded Gerbers satisfy the same Standard copper-to-edge rule everywhere.
-    npth_holes = read_excellon_holes(BASE / "Drill_NPTH_Through.DRL")
+    npth_holes = [
+        *read_excellon_holes(BASE / "Drill_NPTH_Through.DRL"),
+        *[
+            (x, y, TAG_ALIGNMENT_DRILL)
+            for x, y in design["tag_alignment_holes"]
+        ],
+    ]
     npth_edge_keepout = unary_union([
         circle_shape(x, y, diameter + 2 * EDGE_COPPER_CLEARANCE)
         for x, y, diameter in npth_holes
@@ -1545,7 +1788,7 @@ def write_outputs(design):
     top_mask_dark = unary_union([
         pad.shape.buffer(MASK_EXPAND, resolution=16)
         for pad in design["pads"]
-        if pad.ref == "J1" and pad.through_hole and pad.mask
+        if pad.ref in {"J1", "TC1H"} and pad.through_hole and pad.mask
     ]).buffer(0)
     append_overlay(BASE / "Gerber_TopSolderMaskLayer.GTS", OUT / "Gerber_TopSolderMaskLayer.GTS", top_mask_clear, top_mask_dark)
 
@@ -1555,7 +1798,7 @@ def write_outputs(design):
     # New top silkscreen: intentionally sparse, high-contrast, and pixel-clean.
     top_silk = []
     top_silk.append(text_shape("SWANSONG USB", 2.67, 5.08, 0.62, "center"))
-    top_silk.append(text_shape("USB GAMEPAD - REV C", 2.67, 5.97, 0.22, "center"))
+    top_silk.append(text_shape(f"USB GAMEPAD - REV {REVISION}", 2.67, 5.97, 0.22, "center"))
     labels = [
         ("Y1", 0.845, 5.86), ("Y2", 1.12, 5.59), ("Y3", 0.845, 5.31), ("Y4", 0.565, 5.59),
         ("X1", 0.845, 4.50), ("X2", 1.12, 4.23), ("X3", 0.845, 3.95), ("X4", 0.565, 4.23),
@@ -1567,18 +1810,31 @@ def write_outputs(design):
     write_positive_layer(OUT / "Gerber_TopSilkscreenLayer.GTO", "Top Silkscreen", unary_union(top_silk).buffer(0))
 
     bottom_silk = [
-        text_shape("SWANSONG USB", 2.60, 5.95, 0.26, "center"),
-        text_shape("REV C", 2.60, 5.78, 0.18, "center"),
-        text_shape("FACTORY PROGRAMMED", 3.18, 5.45, 0.12, "center"),
-        text_shape("USB HID GAMEPAD", 3.18, 5.30, 0.12, "center"),
-        text_shape("USB-C", 4.82, 5.30, 0.12, "center"),
-        text_shape("VPP", 3.98, 5.42, 0.08, "right"),
+        bottom_text_shape("SWANSONG USB", 2.60, 5.95, 0.26, "center"),
+        bottom_text_shape(f"REV {REVISION}", 2.60, 5.78, 0.18, "center"),
+        bottom_text_shape("FACTORY PROGRAMMED", 3.18, 5.45, 0.12, "center"),
+        bottom_text_shape("USB HID GAMEPAD", 3.18, 5.30, 0.12, "center"),
+        bottom_text_shape("USB-C", 4.82, 5.30, 0.12, "center"),
+        bottom_text_shape("VPP", 3.98, 5.42, 0.08, "right"),
+        bottom_text_shape("ICSP", TAG_CX - 0.17, TAG_CY - 0.10, 0.11, "center"),
+        circle_shape(TAG_CX + 0.080, TAG_CY - 0.045, 0.012),
     ]
     write_positive_layer(OUT / "Gerber_BottomSilkscreenLayer.GBO", "Bottom Silkscreen", unary_union(bottom_silk).buffer(0))
 
-    # Keep the source board's true non-plated mechanical holes unchanged. The
-    # USB4085 has no plastic locating pegs; all 20 connector holes are plated.
-    shutil.copy2(BASE / "Drill_NPTH_Through.DRL", OUT / "Drill_NPTH_Through.DRL")
+    # Preserve the source mechanical holes and add the three non-plated
+    # TC2030 alignment holes. The USB4085 itself has no plastic locating pegs;
+    # all 20 of its holes remain plated.
+    npth_output = OUT / "Drill_NPTH_Through.DRL"
+    modify_drill(
+        BASE / "Drill_NPTH_Through.DRL", npth_output,
+        design["tag_alignment_holes"], "T04",
+    )
+    npth_text = npth_output.read_text().replace(
+        "%\nG05",
+        f";Holesize 4 = {TAG_ALIGNMENT_DRILL:.4f} inch\n"
+        f"T04C{TAG_ALIGNMENT_DRILL:.4f}\n%\nG05",
+    )
+    npth_output.write_text(npth_text)
     # EasyEDA exported two byte-identical plated drill files with different
     # comments. Emit one canonical file so importers do not show duplicate hits.
     for source_name in ("Drill_PTH_Through.DRL",):
@@ -1639,8 +1895,9 @@ def write_outputs(design):
 
     manifest = {
         "product": "SwanSong USB",
-        "revision": "C",
+        "revision": REVISION,
         "architecture": "PIC16F1459 crystal-free native USB, USB-C device",
+        "programming_interface": "Bottom-side TC2030-PKT-NL, DNL, Microchip ICSP",
         "placements": len(design["placements"]),
         "assembly_side": "Bottom SMT plus one PTH USB-C connector",
         "button_inputs": {net: {"former_module_pad": endpoint, "pic_pin": pin} for endpoint, (net, pin) in design["controls"].items()},

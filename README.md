@@ -1,4 +1,4 @@
-# SwanSong USB Rev C
+# SwanSong USB Rev D
 
 SwanSong USB is a turnkey USB-C gamepad conversion of the published SwanTroller
 PCB. It preserves the board outline, mounting holes, membrane contacts, and
@@ -24,7 +24,11 @@ PIC16F1459 SOIC circuit that MacroFab can source, program, and assemble.
   clear-polarity overlay is left for the factory DRC to reinterpret
 - Stocked GCT `USB4085-GF-A` connector has no plastic locating pegs; its 16
   contacts and four shell stakes are ordinary plated holes
-- Exposed VPP, PGC/B, and PGD/A factory-programming contacts
+- Bottom-side TC2030-PKT-NL Tag-Connect ICSP footprint; spring contacts require
+  no installed connector and no soldering
+- TC1 is DNL and excluded from placement/BOM data, so it adds no assembly part
+- The three TC1 alignment holes and all nine preserved mechanical holes retain
+  the same conservative 16 mil copper-to-edge keepout
 
 ## Files for MacroFab
 
@@ -52,8 +56,8 @@ The generator validates same-layer copper clearance, net continuity, via
 stitching, preserved top-copper conflicts, connector-body interference, and the
 USB-C mating-face position before it writes the manufacturing package.
 
-The reviewed Rev C board renders are in `review-renders/top-rev-c.png` and
-`review-renders/bottom-rev-c.png` (the bottom render is mirrored as viewed from
+The reviewed Rev D board renders are in `review-renders/top-rev-d.png` and
+`review-renders/bottom-rev-d.png` (the bottom render is mirrored as viewed from
 the assembly side).
 
 ## Origin and license
@@ -67,3 +71,7 @@ This is a July 2026 modified version of Zwenergy's GPL-3.0
 The engineering HEX uses Microchip's demo USB identity. Prototypes can be built
 with it, but a Microchip-assigned PID or an owned VID/PID is required before the
 board is sold as a product.
+
+The checked-in HEX is currently the gamepad application, not the final combined
+bootloader-plus-application image. Do not order a batch that requires USB-only
+field updates until that combined image has been built and tested on hardware.
