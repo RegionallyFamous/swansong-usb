@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .venv-*/
+outputs/
 
 # Keep the programmed factory image, not compiler intermediates.
 firmware/build/*

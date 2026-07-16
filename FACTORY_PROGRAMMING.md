@@ -1,4 +1,4 @@
-# SwanSong USB Rev B — factory programming and test
+# SwanSong USB Rev C — factory programming and test
 
 ## Programming
 

@@ -17,6 +17,7 @@ import hashlib
 import heapq
 import json
 import math
+import re
 import shutil
 import sys
 from dataclasses import dataclass
@@ -45,19 +46,26 @@ SMALL_VIA_PAD = 0.0200   # 0.508 mm
 SMALL_VIA_DRILL = 0.0100 # 0.254 mm; MacroFab Standard minimum
 MASK_EXPAND = 0.0030  # 0.076 mm per side
 EDGE_COPPER_CLEARANCE = 0.0160  # 0.406 mm; margin above MacroFab's 10 mil minimum
+USB_PIN_DRILL = 0.40 / 25.4
+USB_PIN_PAD = 0.66 / 25.4  # 5.1 mil annular ring; above MacroFab Standard
+USB_REAR_SHELL_DRILL = 2.20 / 25.4
+USB_REAR_SHELL_PAD = 2.46 / 25.4
+USB_FRONT_SHELL_DRILL = 1.55 / 25.4
+USB_FRONT_SHELL_PAD = 1.81 / 25.4
 
 # The WonderSwan Color exposes its accessory connector on the right side of the
 # shell.  The preserved controller outline has the matching rectangular recess
 # from X=4.720 in to the outer edge and Y=4.455..5.230 in.  Keep the USB-C
 # receptacle centered in that opening and preserve the proven front-edge offset
-# used by Rev A, which leaves the signal lands safely on the PCB while the plug
-# mouth projects into the shell opening.
+# used by Rev A, which leaves the connector mouth safely inside the opening.
 ACCESSORY_RECESS_INNER_X = 4.720
 ACCESSORY_RECESS_Y_MIN = 4.455
 ACCESSORY_RECESS_Y_MAX = 5.230
-USB_CX = 4.58394
+USB_FRONT_X = ACCESSORY_RECESS_INNER_X + 0.008625
+USB_BODY_LENGTH = 9.17 / 25.4
+USB_CX = USB_FRONT_X - USB_BODY_LENGTH / 2
 USB_CY = (ACCESSORY_RECESS_Y_MIN + ACCESSORY_RECESS_Y_MAX) / 2
-USB_BODY_HALF_LENGTH = 3.675 / 25.4
+USB_BODY_HALF_LENGTH = USB_BODY_LENGTH / 2
 USB_BODY_HALF_WIDTH = 4.47 / 25.4
 
 
@@ -72,9 +80,13 @@ class Pad:
     height: float
     paste: bool = True
     mask: bool = True
+    round: bool = False
+    through_hole: bool = False
 
     @property
     def shape(self):
+        if self.round:
+            return Point(self.x, self.y).buffer(self.width / 2, resolution=24)
         return box(
             self.x - self.width / 2,
             self.y - self.height / 2,
@@ -97,6 +109,11 @@ class Placement:
 
 def rect_pad(ref, number, net, x, y, width_mm, height_mm, **kwargs):
     return Pad(ref, str(number), net, x, y, width_mm / 25.4, height_mm / 25.4, **kwargs)
+
+
+def round_pad(ref, number, net, x, y, diameter_mm, **kwargs):
+    diameter = diameter_mm / 25.4
+    return Pad(ref, str(number), net, x, y, diameter, diameter, round=True, **kwargs)
 
 
 def line_shape(points: list[tuple[float, float]], width=TRACE_W):
@@ -206,34 +223,45 @@ def pic_pads(cx=4.50, cy=5.52):
     return pads
 
 
-def connector_pads(cx=USB_CX, cy=USB_CY):
-    """GCT USB4110-GF-A facing the right-side accessory-port recess."""
-    local = [
-        ("A1", "GND", -3.2, -3.68, 0.6, 1.15),
-        ("A4", "VBUS", -2.4, -3.68, 0.6, 1.15),
-        ("A5", "CC1", -1.25, -3.68, 0.3, 1.15),
-        ("A6", "USB_DP", -0.25, -3.68, 0.3, 1.15),
-        ("A7", "USB_DM", 0.25, -3.68, 0.3, 1.15),
-        ("A8", "NC", 1.25, -3.68, 0.3, 1.15),
-        ("A9", "VBUS", 2.4, -3.68, 0.6, 1.15),
-        ("A12", "GND", 3.2, -3.68, 0.6, 1.15),
-        ("B1", "GND", 3.2, -3.68, 0.6, 1.15),
-        ("B4", "VBUS", 2.4, -3.68, 0.6, 1.15),
-        ("B5", "CC2", 1.75, -3.68, 0.3, 1.15),
-        ("B6", "USB_DP", 0.75, -3.68, 0.3, 1.15),
-        ("B7", "USB_DM", -0.75, -3.68, 0.3, 1.15),
-        ("B8", "NC", -1.75, -3.68, 0.3, 1.15),
-        ("B9", "VBUS", -2.4, -3.68, 0.6, 1.15),
-        ("B12", "GND", -3.2, -3.68, 0.6, 1.15),
-        ("SH1", "GND", -5.11, -3.105, 2.18, 2.0),
-        ("SH2", "GND", -5.11, 0.825, 2.18, 2.0),
-        ("SH3", "GND", 5.11, -3.105, 2.18, 2.0),
-        ("SH4", "GND", 5.11, 0.825, 2.18, 2.0),
+def connector_pads(cy=USB_CY):
+    """GCT USB4085-GF-A PTH USB-C facing the accessory-port recess.
+
+    GCT's component-side land pattern uses two 0.85 mm-pitch rows separated by
+    1.35 mm. The drawing is for a top-mounted part. Here the receptacle is
+    bottom-mounted and faces +X, so flipping it around that +X mating axis puts
+    A1/B12 at +Y; the descending column order below is the intentional mirror.
+    The four rectangular shell stakes are deliberately placed in close-fitting
+    round plated holes: MacroFab documents this as electrically valid, and it
+    avoids the extra fabrication cost of routed plated slots.
+    """
+    columns = [2.975, 2.125, 1.275, 0.425, -0.425, -1.275, -2.125, -2.975]
+    a_pins = [
+        ("A1", "GND"), ("A4", "VBUS"), ("A5", "CC1"), ("A6", "USB_DP"),
+        ("A7", "USB_DM"), ("A8", "NC_A8"), ("A9", "VBUS"), ("A12", "GND"),
+    ]
+    b_pins = [
+        ("B12", "GND"), ("B9", "VBUS"), ("B8", "NC_B8"), ("B7", "USB_DM"),
+        ("B6", "USB_DP"), ("B5", "CC2"), ("B4", "VBUS"), ("B1", "GND"),
     ]
     result = []
-    for number, net, lx, ly, w, h in local:
-        # -90 degree rotation: (x, y) -> (y, -x); pad dimensions swap.
-        result.append(rect_pad("J1", number, net, cx + ly / 25.4, cy - lx / 25.4, h, w))
+    for depth_mm, pins in ((6.65, a_pins), (5.30, b_pins)):
+        x = USB_FRONT_X - depth_mm / 25.4
+        for (number, net), column_mm in zip(pins, columns):
+            result.append(round_pad(
+                "J1", number, net, x, cy + column_mm / 25.4, 0.66,
+                paste=False, mask=True, through_hole=True,
+            ))
+
+    for row, depth_mm, pad_mm in (
+        ("R", 5.12, 2.46),
+        ("F", 1.74, 1.81),
+    ):
+        x = USB_FRONT_X - depth_mm / 25.4
+        for side, column_mm in (("U", 4.325), ("L", -4.325)):
+            result.append(round_pad(
+                "J1", f"SH{row}{side}", "GND", x, cy + column_mm / 25.4, pad_mm,
+                paste=False, mask=True, through_hole=True,
+            ))
     return result
 
 
@@ -443,7 +471,10 @@ def assign_pad_nets(pads, assignments):
     for pad in pads:
         key = (pad.ref, pad.number)
         net = assignments.get(key, pad.net)
-        result.append(Pad(pad.ref, pad.number, net, pad.x, pad.y, pad.width, pad.height, pad.paste, pad.mask))
+        result.append(Pad(
+            pad.ref, pad.number, net, pad.x, pad.y, pad.width, pad.height,
+            pad.paste, pad.mask, pad.round, pad.through_hole,
+        ))
     return result
 
 
@@ -452,7 +483,7 @@ def build_design():
     pic = pic_pads(cx=4.38, cy=5.52)
     connector = connector_pads()
     resistor_array_1 = resistor_array_pads("RN1", 3.93, 5.60)
-    resistor_array_2 = resistor_array_pads("RN2", 4.34, 4.96)
+    resistor_array_2 = resistor_array_pads("RN2", 4.28, 4.96)
 
     # Assign each contact to the nearest available GPIO while reserving the
     # PIC's native USB/power pins.  The four bottom-right controls escape under
@@ -513,8 +544,8 @@ def build_design():
     # pull-downs live above/below the connector so the data pair stays short.
     # Put the Type-C configuration resistors immediately behind the relocated
     # connector.  This also keeps them clear of the receptacle's metal body.
-    all_pads.extend(passive_pads("R1", "GND", "CC1", 4.22, 4.860, 0))
-    all_pads.extend(passive_pads("R2", "GND", "CC2", 4.22, 4.765, 0))
+    all_pads.extend(passive_pads("R1", "GND", "CC1", 4.22, 4.700, 0))
+    all_pads.extend(passive_pads("R2", "GND", "CC2", 4.22, 4.620, 0))
     all_pads.extend(passive_pads("C1", "VBUS", "GND", 4.05, 5.02, 0, True))
     # Rev A placed C2 beneath the connector's new mechanical envelope. Move it
     # left beside C1/RN2 so no assembled part sits below the USB-C shell.
@@ -545,47 +576,54 @@ def build_design():
 
     route("MCLR", [(pic[4].x, pic[4].y), (4.10, pic[4].y), (4.075, 5.42), (4.04, 5.42)])
 
-    # USB-C duplicate pins. D+ stays on the bottom and joins behind the
-    # connector. D- changes layers through two 10-mil vias, avoiding the
-    # interleaved reversible-connector pads without a zero-ohm jumper.
+    # The USB4085 contacts are plated through-holes. Join each reversible D+/D-
+    # pair on top, using only one ordinary via beside the PIC for each signal.
     dm_pads = sorted([p for p in all_pads if p.ref == "J1" and p.net == "USB_DM"], key=lambda p: p.y)
     dp_pads = sorted([p for p in all_pads if p.ref == "J1" and p.net == "USB_DP"], key=lambda p: p.y)
-    # Each reversible USB-C data contact gets its own via. Joining the duplicate
-    # A/B contacts on the top layer prevents the interleaved bottom pads from
-    # forcing a crossover beneath the receptacle.
     dm_vias = [
         (4.65, pic[18].y),
-        (4.50, dm_pads[0].y),
-        (4.50, dm_pads[1].y),
+        (dm_pads[0].x, dm_pads[0].y),
+        (dm_pads[1].x, dm_pads[1].y),
     ]
     dp_vias = [
         (4.63, pic[19].y),
-        (4.52, dp_pads[0].y),
-        (4.52, dp_pads[1].y),
+        (dp_pads[0].x, dp_pads[0].y),
+        (dp_pads[1].x, dp_pads[1].y),
     ]
-    for x, y in dm_vias:
-        nets.setdefault("USB_DM", []).append(circle_shape(x, y, SMALL_VIA_PAD))
+    nets.setdefault("USB_DM", []).append(circle_shape(*dm_vias[0], SMALL_VIA_PAD))
     route("USB_DM", [(pic[18].x, pic[18].y), dm_vias[0]])
-    route("USB_DM", [dm_vias[1], (dm_pads[0].x, dm_pads[0].y)])
-    route("USB_DM", [dm_vias[2], (dm_pads[1].x, dm_pads[1].y)])
-    for x, y in dp_vias:
-        nets.setdefault("USB_DP", []).append(circle_shape(x, y, SMALL_VIA_PAD))
+    # The reversible D-/D+ contacts form opposing diagonals in the 16-pin
+    # Type-C footprint. Join D- on the bottom and D+ on the top so those two
+    # diagonals never cross on the same copper layer. The plated contacts make
+    # the layer transition without adding another via or fabrication feature.
+    route("USB_DM", [dm_vias[1], dm_vias[2]])
+    nets.setdefault("USB_DP", []).append(circle_shape(*dp_vias[0], SMALL_VIA_PAD))
     route("USB_DP", [(pic[19].x, pic[19].y), dp_vias[0]])
-    route("USB_DP", [dp_vias[1], (dp_pads[0].x, dp_pads[0].y)])
-    route("USB_DP", [dp_vias[2], (dp_pads[1].x, dp_pads[1].y)])
 
-    # Tie the two physical VBUS positions behind the connector pin row.  VBUS
-    # then uses a short top-layer bridge between two vias, avoiding the control
-    # fanout without adding a purchased jumper or a second assembly side.
-    vbus_pads = sorted({(p.x, p.y) for p in all_pads if p.ref == "J1" and p.net == "VBUS"}, key=lambda p: p[1])
-    connector_vbus_spine_x = 4.56
-    route("VBUS", [vbus_pads[0], (connector_vbus_spine_x, vbus_pads[0][1]), (connector_vbus_spine_x, vbus_pads[-1][1]), vbus_pads[-1]], 0.012)
+    # Pair the four VBUS contacts by row, then escape behind the receptacle on
+    # a left-side spine. The PTH grid leaves a full Standard-rule corridor.
+    vbus_pads = [p for p in all_pads if p.ref == "J1" and p.net == "VBUS"]
+    vbus_rows = {}
+    for pad in vbus_pads:
+        vbus_rows.setdefault(round(pad.y, 6), []).append(pad)
+    connector_vbus_spine_x = 4.40
+    for row_y, row_pads in sorted(vbus_rows.items()):
+        row_pads = sorted(row_pads, key=lambda p: p.x)
+        route("VBUS", [(row_pads[0].x, row_y), (row_pads[-1].x, row_y)], 0.008)
+        route("VBUS", [(row_pads[0].x, row_y), (connector_vbus_spine_x, row_y)], 0.008)
+    lower_vbus_y = min(vbus_rows)
+    upper_vbus_y = max(vbus_rows)
+    route("VBUS", [
+        (connector_vbus_spine_x, lower_vbus_y),
+        (connector_vbus_spine_x, upper_vbus_y),
+    ], 0.008)
     signal_vias = [(4.56, 5.11), (4.24, pic[1].y)]
     for x, y in signal_vias:
         nets.setdefault("VBUS", []).append(circle_shape(x, y, VIA_PAD))
     route("VBUS", [
-        vbus_pads[-1], (connector_vbus_spine_x, vbus_pads[-1][1]),
-        (signal_vias[0][0], vbus_pads[-1][1]), signal_vias[0],
+        (connector_vbus_spine_x, upper_vbus_y),
+        (connector_vbus_spine_x, 5.08),
+        (signal_vias[0][0], 5.08), signal_vias[0],
     ], 0.008)
     route("VBUS", [signal_vias[1], (4.32, pic[1].y), (pic[1].x, pic[1].y)], 0.012)
 
@@ -593,15 +631,18 @@ def build_design():
     # feeds the nearby PIC VBUS landing; the existing top VBUS bridge carries
     # power onward to the USB-C connector without crossing the A/B controls.
     rn1_common = pad_map[("RN1", "1")]
-    rn2_common_low = pad_map[("RN2", "10")]
+    rn2_common = pad_map[("RN2", "1")]
+    # Run the supply spine through the empty center beneath RN2's package. The
+    # right-hand signal pads can then escape outward with a full 5 mil gap.
+    connector_side_power_x = 4.30
     route("VBUS", [
         (rn1_common.x, rn1_common.y), (3.75, rn1_common.y),
-        (3.75, 4.82), (rn2_common_low.x, 4.82),
-        (rn2_common_low.x, rn2_common_low.y),
+        (3.75, 4.82), (connector_side_power_x, 4.82),
+        (connector_side_power_x, rn2_common.y), (rn2_common.x, rn2_common.y),
     ], 0.008)
-    rn2_common = pad_map[("RN2", "1")]
     rn_power_path = [
-        (rn2_common.x, rn2_common.y), (4.33, rn2_common.y),
+        (rn2_common.x, rn2_common.y), (connector_side_power_x, rn2_common.y),
+        (connector_side_power_x, 5.15), (4.33, 5.18),
         (4.33, 5.25), signal_vias[1],
     ]
     route("VBUS", rn_power_path, 0.008)
@@ -802,28 +843,87 @@ def build_design():
     for net, path in pullup_paths.items():
         route(net, path)
 
-    # CC and VUSB branches are added after the button fanout so their narrow
-    # service corridors do not bias the control router.
+    # The original A-button trace occupies the USB connector's shell-stake
+    # locations. Preserve the membrane contact below the connector, add one via
+    # in that retained trace, and carry A to its existing bottom network. This
+    # removes the long top-side barrier without changing the button circuitry.
+    a_button_via = (4.67, 4.50)
+    nets.setdefault("A", []).append(circle_shape(*a_button_via, SMALL_VIA_PAD))
+    a_button_goal = pad_map[("RN2", "2")]
+    a_button_blocked = unary_union([
+        shape
+        for other_net, shapes in nets.items()
+        if other_net != "A"
+        for shape in shapes
+    ]).buffer(CLEARANCE + TRACE_W / 2)
+    a_button_path = astar_path(
+        a_button_via, (a_button_goal.x, a_button_goal.y),
+        a_button_blocked, (4.05, 4.40, 4.72, 5.15), step=0.0025,
+    )
+    route("A", a_button_path)
+
+    # Each Type-C configuration net changes layers once in the open channel to
+    # the right of the connector contacts. The bottom half then reaches its
+    # resistor below the VBUS trunk without crossing any power copper.
     cc1 = next(p for p in all_pads if p.ref == "J1" and p.net == "CC1")
     cc2 = next(p for p in all_pads if p.ref == "J1" and p.net == "CC2")
     r1_cc = pad_map[("R1", "2")]
-    # Hop CC1 over RN2's VBUS feed on the top layer.  Both 10 mil vias use the
-    # same standard drill already required by the USB pair, so this adds no
-    # special fabrication operation or purchased part.
-    cc1_vias = [(4.32, 4.88), (4.26, 4.88)]
-    for x, y in cc1_vias:
-        nets.setdefault("CC1", []).append(circle_shape(x, y, SMALL_VIA_PAD))
-    route("CC1", [(cc1.x, cc1.y), (4.34, 4.88), cc1_vias[0]])
-    route("CC1", [cc1_vias[1], (r1_cc.x, r1_cc.y)])
-    route("CC2", [(cc2.x, cc2.y), (pad_map[("R2", "2")].x, pad_map[("R2", "2")].y)])
+    # Separate the two transitions vertically: CC2 passes below the relocated
+    # A trace while CC1 passes above it. Their bottom traces then run in parallel
+    # lanes to the two resistors.
+    cc1_vias = [(cc1.x, cc1.y), (4.635, 5.065)]
+    cc2_vias = [(cc2.x, cc2.y), (4.635, 4.600)]
+    nets.setdefault("CC1", []).append(circle_shape(*cc1_vias[1], SMALL_VIA_PAD))
+    nets.setdefault("CC2", []).append(circle_shape(*cc2_vias[1], SMALL_VIA_PAD))
+    cc_bottom_info = {
+        "CC1": (cc1_vias[1], (r1_cc.x, r1_cc.y)),
+        "CC2": (
+            cc2_vias[1],
+            (pad_map[("R2", "2")].x, pad_map[("R2", "2")].y),
+        ),
+    }
+    cc_bottom_paths = None
+    cc_bottom_failures = []
+    for order in (("CC2", "CC1"), ("CC1", "CC2")):
+        dynamic = Polygon()
+        trial = {}
+        try:
+            for net in order:
+                start, goal = cc_bottom_info[net]
+                fixed = unary_union([
+                    shape
+                    for other_net, shapes in nets.items()
+                    if other_net != net
+                    for shape in shapes
+                ]).buffer(CLEARANCE + TRACE_W / 2)
+                blocked = fixed.union(dynamic)
+                path = astar_path(
+                    start, goal, blocked,
+                    (4.05, 4.45, 4.72, 5.08), step=0.0025,
+                )
+                shape = line_shape(path)
+                trial[net] = path
+                dynamic = dynamic.union(shape.buffer(CLEARANCE + TRACE_W / 2))
+        except RuntimeError as exc:
+            cc_bottom_failures.append(str(exc))
+            continue
+        cc_bottom_paths = trial
+        break
+    if cc_bottom_paths is None:
+        raise RuntimeError(
+            "Unable to complete bottom-layer USB-C configuration fanout; "
+            + "; ".join(cc_bottom_failures)
+        )
+    for net, path in cc_bottom_paths.items():
+        route(net, path)
 
     # Stitch the two remote capacitor returns and the controller-side ground
     # pocket into the original top ground plane. The vias sit beyond the paste
     # pads, preventing solder wicking during bottom-side assembly.
     ground_vias = [
         (4.035, 5.055),  # C1 return
-        (4.155, 4.92),   # C2 and CC-resistor returns
-        (4.63, 5.10),    # USB-C signal-ground and shield return
+        (4.155, 4.92),   # C2 return
+        (4.05, 4.60),    # CC-resistor return in the original top ground plane
         (4.60, 5.30),    # controller pin-20 ground pocket
         (4.45, 5.80),
         (4.44, 5.60),    # main controller-side ground pour
@@ -836,50 +936,15 @@ def build_design():
         (ground_vias[1][0], 4.85), ground_vias[1],
     ])
 
-    # R1 returns to the nearby stitching via above the VBUS trunk. R2 remains
-    # below that trunk and joins the connector's lower ground contact through
-    # the open corridor between the signal row and lower shell stake.
+    # Both Type-C configuration resistors return to the nearby ground stitch.
     r1_gnd = pad_map[("R1", "1")]
     r2_gnd = pad_map[("R2", "1")]
-    route("GND", [(r1_gnd.x, r1_gnd.y), (r1_gnd.x, 4.92), ground_vias[1]])
-    lower_j1_ground = min(
-        [p for p in all_pads if p.ref == "J1" and p.net == "GND" and not p.number.startswith("SH")],
-        key=lambda p: p.y,
-    )
     route("GND", [
-        (r2_gnd.x, r2_gnd.y), (4.18, 4.73),
-        (4.36, 4.695), (4.40, 4.695),
-        (lower_j1_ground.x, lower_j1_ground.y),
+        (r1_gnd.x, r1_gnd.y), (ground_vias[2][0], r1_gnd.y), ground_vias[2],
     ])
-
-    # The connector now sits outside the former-module ground pour. Tie every
-    # GND contact and all four shield stakes together along the front side of
-    # the receptacle, then stitch that local group into the original top plane.
-    j1_ground_pads = [p for p in all_pads if p.ref == "J1" and p.net == "GND"]
-    j1_pin_ground = sorted(
-        [p for p in j1_ground_pads if not p.number.startswith("SH")],
-        key=lambda p: p.y,
-    )
-    j1_shell_ground = [p for p in j1_ground_pads if p.number.startswith("SH")]
-    connector_ground_spine_x = 4.66
-    left_shell_by_y = sorted(
-        [p for p in j1_shell_ground if p.x < USB_CX],
-        key=lambda p: p.y,
-    )
-    for pad in j1_pin_ground:
-        nearest_shell = min(left_shell_by_y, key=lambda p: abs(p.y - pad.y))
-        route("GND", [(pad.x, pad.y), (nearest_shell.x, nearest_shell.y)])
-    for shell_y in sorted({p.y for p in j1_shell_ground}):
-        shell_row = sorted([p for p in j1_shell_ground if abs(p.y - shell_y) < 1e-6], key=lambda p: p.x)
-        # All four stakes are one continuous metal shell. Ground the right-hand
-        # stakes directly; the left stakes are electrically common through the
-        # connector body and remain free of the button-routing escape channel.
-        route("GND", [(shell_row[-1].x, shell_y), (connector_ground_spine_x, shell_y)])
     route("GND", [
-        (connector_ground_spine_x, min(p.y for p in j1_shell_ground)),
-        (connector_ground_spine_x, max(p.y for p in j1_shell_ground)),
-        ground_vias[2],
-    ], 0.012)
+        (r2_gnd.x, r2_gnd.y), (ground_vias[2][0], r2_gnd.y), ground_vias[2],
+    ])
 
     # Re-pour the cleared module bay as bottom ground after every signal is
     # fixed.  Only pour components that touch a real GND pad are retained, so
@@ -913,57 +978,192 @@ def build_design():
     existing_x3 = component_for_point(base_top, x3_vias[0], tolerance=0.001)
     if existing_x3 is None:
         raise RuntimeError("Unable to identify original X3 top-copper component")
+    # The original A-button trace runs vertically through the accessory-port
+    # bay. Retain the membrane contact below the connector, then retire the
+    # upper trace that would otherwise be bridged by the grounded shell stakes.
+    existing_a = component_for_point(base_top, (4.67, 5.18), tolerance=0.001)
+    if existing_a is None:
+        raise RuntimeError("Unable to identify original A-button top-copper component")
+    a_keep_box = box(4.60, 4.00, 5.05, 4.52)
+    retained_a = existing_a.intersection(a_keep_box).buffer(0)
+    a_repurpose_clear = existing_a.difference(retained_a).buffer(0.0010)
     signal_copper = unary_union([
         component for component in components
         if component is not ground_component
         and not component.equals(existing_x3)
+        and not component.equals(existing_a)
     ]).difference(top_repurpose_clear).buffer(0)
     retained_x3 = existing_x3.difference(top_repurpose_clear).buffer(0)
+    a_top_shape = unary_union([
+        retained_a,
+        circle_shape(*a_button_via, SMALL_VIA_PAD),
+        circle_shape(endpoints[20].x, endpoints[20].y, SMALL_VIA_PAD),
+    ]).buffer(0)
     vbus_top_blocked = unary_union([
         signal_copper.buffer(CLEARANCE + VIA_PAD / 2),
         retained_x3.buffer(CLEARANCE + TRACE_W / 2),
+        a_top_shape.buffer(CLEARANCE + TRACE_W / 2),
     ])
     top_vbus_path = astar_path(
         signal_vias[0], signal_vias[1], vbus_top_blocked,
         (3.80, 4.90, 4.72, 5.90), step=0.0025,
     )
+    j1_top_pads = {}
+    for pad in all_pads:
+        if pad.ref == "J1" and pad.through_hole and pad.net != "GND":
+            j1_top_pads.setdefault(pad.net, []).append(pad.shape)
     top_nets = {
+        "A": a_top_shape,
         "VBUS": unary_union([
             line_shape(top_vbus_path, 0.010),
             *[circle_shape(x, y, VIA_PAD) for x, y in signal_vias],
+            *j1_top_pads["VBUS"],
+        ]).buffer(0),
+        "GND": unary_union([
+            pad.shape for pad in all_pads
+            if pad.ref == "J1" and pad.through_hole and pad.net == "GND"
         ]).buffer(0),
     }
-    top_nets["CC1"] = unary_union([
-        line_shape(cc1_vias),
-        *[circle_shape(x, y, SMALL_VIA_PAD) for x, y in cc1_vias],
-    ]).buffer(0)
+    top_nets["NC_A8"] = unary_union(j1_top_pads["NC_A8"]).buffer(0)
+    top_nets["NC_B8"] = unary_union(j1_top_pads["NC_B8"]).buffer(0)
+
+    cc_top_info = {
+        "CC1": {"contact": cc1_vias[0], "via": cc1_vias[1]},
+        "CC2": {"contact": cc2_vias[0], "via": cc2_vias[1]},
+    }
+    cc_top_paths = None
+    cc_top_shapes = None
+    cc_top_failures = []
+    for order in (("CC2", "CC1"), ("CC1", "CC2")):
+        dynamic = unary_union([
+            signal_copper.buffer(CLEARANCE + TRACE_W / 2),
+            *[shape.buffer(CLEARANCE + TRACE_W / 2) for shape in top_nets.values()],
+        ])
+        trial_paths = {}
+        trial_shapes = {}
+        try:
+            for net in order:
+                info = cc_top_info[net]
+                other_pads = unary_union([
+                    pad.shape.buffer(CLEARANCE + TRACE_W / 2)
+                    for pad in all_pads
+                    if pad.ref == "J1" and pad.net != net
+                ])
+                path = astar_path(
+                    info["contact"], info["via"], dynamic.union(other_pads),
+                    (4.30, 4.45, 4.72, 5.30), step=0.0025,
+                )
+                shape = unary_union([
+                    line_shape(path),
+                    circle_shape(*info["via"], SMALL_VIA_PAD),
+                    *j1_top_pads[net],
+                ]).buffer(0)
+                trial_paths[net] = path
+                trial_shapes[net] = shape
+                dynamic = dynamic.union(shape.buffer(CLEARANCE + TRACE_W / 2))
+        except RuntimeError as exc:
+            cc_top_failures.append(str(exc))
+            continue
+        cc_top_paths = trial_paths
+        cc_top_shapes = trial_shapes
+        break
+    if cc_top_paths is None or cc_top_shapes is None:
+        raise RuntimeError(
+            "Unable to complete top-layer USB-C configuration fanout; "
+            + "; ".join(cc_top_failures)
+        )
+    top_nets.update(cc_top_shapes)
 
     # Route the relocated USB pair through the existing top-side ground plane
     # without cutting any preserved button trace.  A* is used here instead of
     # the Rev-A straight bridges because the accessory-port recess lies below
     # several original A/B fanout traces.
     usb_top_bounds = (3.80, 4.60, 4.72, 5.90)
-    usb_dm_blocked = unary_union([
+    usb_fixed_blocked = unary_union([
         signal_copper.buffer(CLEARANCE + TRACE_W / 2),
-        top_nets["VBUS"].buffer(CLEARANCE + TRACE_W / 2),
+        *[shape.buffer(CLEARANCE + TRACE_W / 2) for shape in top_nets.values()],
+        *[
+            pad.shape.buffer(CLEARANCE + TRACE_W / 2)
+            for pad in all_pads
+            if pad.ref == "J1" and pad.net == "GND"
+        ],
     ])
-    top_dm_path = astar_path(dm_vias[0], dm_vias[2], usb_dm_blocked, usb_top_bounds, step=0.0025)
-    top_nets["USB_DM"] = unary_union([
-        line_shape(top_dm_path),
-        line_shape([dm_vias[1], dm_vias[2]]),
-        *[circle_shape(x, y, SMALL_VIA_PAD) for x, y in dm_vias],
-    ]).buffer(0)
-
-    usb_dp_blocked = unary_union([
-        usb_dm_blocked,
-        top_nets["USB_DM"].buffer(CLEARANCE + TRACE_W / 2),
-    ])
-    top_dp_path = astar_path(dp_vias[0], dp_vias[1], usb_dp_blocked, usb_top_bounds, step=0.0025)
-    top_nets["USB_DP"] = unary_union([
-        line_shape(top_dp_path),
-        line_shape([dp_vias[1], dp_vias[2]]),
-        *[circle_shape(x, y, SMALL_VIA_PAD) for x, y in dp_vias],
-    ]).buffer(0)
+    usb_data = {
+        "USB_DM": {
+            "via": dm_vias[0],
+            "contacts": dm_vias[1:],
+            "pair_on_top": False,
+        },
+        "USB_DP": {
+            "via": dp_vias[0],
+            "contacts": dp_vias[1:],
+            "pair_on_top": True,
+        },
+    }
+    usb_data_paths = None
+    usb_data_shapes = None
+    usb_data_failures = []
+    # Try both net orders and both possible connector targets. The footprint is
+    # dense enough that choosing the wrong first escape can close the only
+    # Standard-rule corridor for the second signal.
+    for order in (("USB_DP", "USB_DM"), ("USB_DM", "USB_DP")):
+        for first_target in (0, 1):
+            for second_target in (0, 1):
+                target_by_net = {
+                    order[0]: first_target,
+                    order[1]: second_target,
+                }
+                trial_paths = {}
+                trial_shapes = {}
+                dynamic = usb_fixed_blocked
+                try:
+                    for net in order:
+                        info = usb_data[net]
+                        other_net = "USB_DP" if net == "USB_DM" else "USB_DM"
+                        other_pad_blocked = unary_union([
+                            shape.buffer(CLEARANCE + TRACE_W / 2)
+                            for shape in j1_top_pads[other_net]
+                        ])
+                        blocked = dynamic.union(other_pad_blocked)
+                        target = info["contacts"][target_by_net[net]]
+                        path = astar_path(
+                            info["via"], target, blocked,
+                            usb_top_bounds, step=0.0025,
+                        )
+                        shapes = [
+                            line_shape(path),
+                            circle_shape(*info["via"], SMALL_VIA_PAD),
+                            *j1_top_pads[net],
+                        ]
+                        if info["pair_on_top"]:
+                            pair_shape = line_shape(info["contacts"])
+                            if blocked.intersects(pair_shape):
+                                raise RuntimeError(f"No clear top-layer contact pair for {net}")
+                            shapes.append(pair_shape)
+                        net_shape = unary_union(shapes).buffer(0)
+                        trial_paths[net] = path
+                        trial_shapes[net] = net_shape
+                        dynamic = dynamic.union(
+                            net_shape.buffer(CLEARANCE + TRACE_W / 2)
+                        )
+                except RuntimeError as exc:
+                    usb_data_failures.append(str(exc))
+                    continue
+                usb_data_paths = trial_paths
+                usb_data_shapes = trial_shapes
+                break
+            if usb_data_paths is not None:
+                break
+        if usb_data_paths is not None:
+            break
+    if usb_data_paths is None or usb_data_shapes is None:
+        raise RuntimeError(
+            "Unable to complete USB-C top-layer fanout; "
+            + "; ".join(usb_data_failures)
+        )
+    top_dm_path = usb_data_paths["USB_DM"]
+    top_dp_path = usb_data_paths["USB_DP"]
+    top_nets.update(usb_data_shapes)
     retained_x3 = component_for_point(
         retained_x3.difference(top_nets["VBUS"].buffer(CLEARANCE + 0.0003)).buffer(0),
         x3_vias[0],
@@ -986,40 +1186,58 @@ def build_design():
     ]).buffer(0)
     top_paths = {
         "VBUS": top_vbus_path,
-        "CC1": cc1_vias,
-        "USB_DM": [*top_dm_path, dm_vias[2]],
-        "USB_DP": [*top_dp_path, dp_vias[2]],
+        "CC1": cc_top_paths["CC1"],
+        "CC2": cc_top_paths["CC2"],
+        "USB_DM": top_dm_path,
+        "USB_DP": [*top_dp_path, *dp_vias[1:]],
         "X3": top_x3_path,
     }
 
     placements = [
         Placement("U1", "PIC16F1459", "PIC16F1459-I/SO", 4.38, 5.52, 180, package="SOIC-20"),
-        Placement("J1", "USB-C 2.0 receptacle", "USB4110-GF-A", USB_CX, USB_CY, 0, package="GCT USB4110"),
+        Placement("J1", "USB-C 2.0 receptacle", "USB4085-GF-A", USB_CX, USB_CY, 0, package="GCT USB4085 PTH"),
         Placement("RN1", "8x10k bussed resistor array", "746X101103JP", 3.93, 5.60, 90, package="1206 10-pin bussed array"),
-        Placement("RN2", "8x10k bussed resistor array", "746X101103JP", 4.34, 4.96, 90, package="1206 10-pin bussed array"),
-        Placement("R1", "5.1k 1%", "RC0402FR-075K1L", 4.22, 4.860, 0, package="0402"),
-        Placement("R2", "5.1k 1%", "RC0402FR-075K1L", 4.22, 4.765, 0, package="0402"),
+        Placement("RN2", "8x10k bussed resistor array", "746X101103JP", 4.28, 4.96, 90, package="1206 10-pin bussed array"),
+        Placement("R1", "5.1k 1%", "RC0402FR-075K1L", 4.22, 4.700, 0, package="0402"),
+        Placement("R2", "5.1k 1%", "RC0402FR-075K1L", 4.22, 4.620, 0, package="0402"),
         Placement("C1", "0.1uF 16V X7R", "CC0402KRX7R7BB104", 4.05, 5.02, 0, package="0402"),
         Placement("C2", "1uF 10V X7R", "CC0402KRX7R6BB105", 4.12, 4.90, 90, package="0402"),
         Placement("C3", "0.47uF 6.3V X5R", "CC0402KRX5R5BB474", 4.63, 5.465, 90, package="0402"),
     ]
-    npth = [
-        (USB_CX - 2.605 / 25.4, USB_CY + 2.89 / 25.4),
-        (USB_CX - 2.605 / 25.4, USB_CY - 2.89 / 25.4),
-    ]
     all_vias = signal_vias + ground_vias
-    small_vias = dm_vias + dp_vias + cc1_vias + x3_vias
+    small_vias = [
+        dm_vias[0], dp_vias[0], cc1_vias[1], cc2_vias[1],
+        a_button_via, *x3_vias,
+    ]
+    j1_pin_holes = [
+        (pad.x, pad.y) for pad in all_pads
+        if pad.ref == "J1" and not pad.number.startswith("SH")
+    ]
+    j1_rear_shell_holes = [
+        (pad.x, pad.y) for pad in all_pads
+        if pad.ref == "J1" and pad.number.startswith("SHR")
+    ]
+    j1_front_shell_holes = [
+        (pad.x, pad.y) for pad in all_pads
+        if pad.ref == "J1" and pad.number.startswith("SHF")
+    ]
     return {
         "pads": all_pads,
         "bottom_nets": bottom_nets,
         "top_nets": top_nets,
         "placements": placements,
-        "npth": npth,
+        "j1_pin_holes": j1_pin_holes,
+        "j1_rear_shell_holes": j1_rear_shell_holes,
+        "j1_front_shell_holes": j1_front_shell_holes,
         "vias": all_vias,
         "small_vias": small_vias,
         "dm_vias": dm_vias,
         "dp_vias": dp_vias,
+        "cc_bottom_paths": cc_bottom_paths,
+        "a_button_path": a_button_path,
+        "a_button_via": a_button_via,
         "cc1_vias": cc1_vias,
+        "cc2_vias": cc2_vias,
         "signal_vias": signal_vias,
         "x3_vias": x3_vias,
         "endpoint_vias": endpoint_vias,
@@ -1031,16 +1249,16 @@ def build_design():
         "ground_component": ground_component,
         "signal_copper": signal_copper,
         "top_repurpose_clear": top_repurpose_clear,
+        "a_repurpose_clear": a_repurpose_clear,
     }
 
 
 def validate_design(design):
     errors = []
 
-    # GCT's verified USB4110 footprint marks the PCB-edge datum 3.675 mm in
-    # front of the footprint origin.  Rev B intentionally projects the mating
-    # face 0.22 mm into the shell opening, while centering the 8.94 mm body in
-    # the much taller preserved accessory-port recess.
+    # The USB4085 body is 9.17 x 8.94 mm. Its mating face projects 0.22 mm into
+    # the preserved accessory-port recess and the deeper PTH body stays clear
+    # of every neighboring component.
     connector_front_x = USB_CX + USB_BODY_HALF_LENGTH
     connector_body_min_y = USB_CY - USB_BODY_HALF_WIDTH
     connector_body_max_y = USB_CY + USB_BODY_HALF_WIDTH
@@ -1050,6 +1268,19 @@ def validate_design(design):
         )
     if connector_body_min_y < ACCESSORY_RECESS_Y_MIN or connector_body_max_y > ACCESSORY_RECESS_Y_MAX:
         errors.append("J1 body does not fit inside the accessory-port recess")
+
+    # The vendor footprint is drawn for a top-mounted connector. SwanSong USB
+    # mounts J1 on the bottom while preserving the +X mating direction, which
+    # mirrors the contact columns: A1/B12 must be above A12/B1 in board view.
+    j1_pads = {
+        pad.number: pad for pad in design["pads"] if pad.ref == "J1"
+    }
+    if not (j1_pads["A1"].y > j1_pads["A12"].y and
+            j1_pads["B12"].y > j1_pads["B1"].y):
+        errors.append("J1 contact pattern is not mirrored for bottom-side assembly")
+    j1_placement = next(p for p in design["placements"] if p.ref == "J1")
+    if j1_placement.side != "Bottom":
+        errors.append("J1 must remain a bottom-side placement")
 
     connector_body = box(
         USB_CX - USB_BODY_HALF_LENGTH,
@@ -1070,11 +1301,25 @@ def validate_design(design):
                 if distance + 1e-6 < CLEARANCE:
                     errors.append(f"{layer_name}: {a} to {b} clearance {distance * 25.4:.3f} mm")
 
+    # Every connector hole has at least a 5 mil copper annulus. The shell tabs
+    # use close-fitting round holes rather than routed slots to keep fabrication
+    # on MacroFab's least-expensive Standard process.
+    for pad in [p for p in design["pads"] if p.ref == "J1"]:
+        if pad.number.startswith("SHR"):
+            drill = USB_REAR_SHELL_DRILL
+        elif pad.number.startswith("SHF"):
+            drill = USB_FRONT_SHELL_DRILL
+        else:
+            drill = USB_PIN_DRILL
+        annular_ring = (pad.width - drill) / 2
+        if annular_ring + 1e-6 < 0.005:
+            errors.append(f"J1 {pad.number} annular ring is {annular_ring * 1000:.2f} mil")
+
     # Every bottom-only net must be a single connected copper component.
     # VBUS is the one deliberate exception: its two bottom components are
     # joined by the validated top trace and plated through-vias.
     for net, shape in design["bottom_nets"].items():
-        if net in {"VBUS", "USB_DM", "USB_DP", "CC1", "X3", "GND"}:
+        if net in {"VBUS", "USB_DM", "USB_DP", "CC1", "CC2", "X3", "GND"}:
             continue
         components = list(shape.geoms) if shape.geom_type == "MultiPolygon" else [shape]
         if len([component for component in components if not component.is_empty]) != 1:
@@ -1087,6 +1332,7 @@ def validate_design(design):
         ("USB_DM", design["dm_vias"], SMALL_VIA_PAD),
         ("USB_DP", design["dp_vias"], SMALL_VIA_PAD),
         ("CC1", design["cc1_vias"], SMALL_VIA_PAD),
+        ("CC2", design["cc2_vias"], SMALL_VIA_PAD),
         ("X3", design["x3_vias"], SMALL_VIA_PAD),
     ):
         shape = design["bottom_nets"][net]
@@ -1104,26 +1350,44 @@ def validate_design(design):
                 component.intersects(pad.shape) for pad in internal_common_pads
             ):
                 continue
-            if hits != 1:
+            # D- is intentionally paired on the bottom: the controller island
+            # terminates at one via while the short connector island terminates
+            # at both plated Type-C contacts.
+            allowed_hits = {1, 2} if net == "USB_DM" else {1}
+            if hits not in allowed_hits:
                 errors.append(f"bottom_nets: {net} island terminates at {hits} vias instead of one")
         top_shape = design["top_nets"][net]
         top_components = list(top_shape.geoms) if top_shape.geom_type == "MultiPolygon" else [top_shape]
-        if len([component for component in top_components if not component.is_empty]) != 1:
+        component_count = len([component for component in top_components if not component.is_empty])
+        if net == "VBUS":
+            # The four isolated top annuli connect through their plated barrels
+            # to the single bottom connector bus; the PIC bridge is the fifth.
+            allowed = 1 + len([p for p in design["pads"] if p.ref == "J1" and p.net == "VBUS"])
+        elif net == "USB_DM":
+            # One top component reaches the controller; the other contact annulus
+            # joins through the validated bottom-layer D- pair.
+            allowed = 2
+        else:
+            allowed = 1
+        if component_count != allowed:
             errors.append(f"top_nets: {net} bridge is not continuous")
 
     # Every local ground pocket must contain a stitching via to the original
     # top ground plane.
     gnd_shape = design["bottom_nets"]["GND"]
     gnd_components = list(gnd_shape.geoms) if gnd_shape.geom_type == "MultiPolygon" else [gnd_shape]
-    connector_shell_pads = [
+    connector_ground_pads = [
         p for p in design["pads"]
-        if p.ref == "J1" and p.number.startswith("SH")
+        if p.ref == "J1" and p.net == "GND" and p.through_hole
     ]
     for component in gnd_components:
         via_hit = any(component.intersects(circle_shape(x, y, VIA_PAD)) for x, y in design["ground_vias"])
-        shell_common = any(component.intersects(pad.shape) for pad in connector_shell_pads)
-        if not via_hit and not shell_common:
+        connector_pth = any(component.intersects(pad.shape) for pad in connector_ground_pads)
+        if not via_hit and not connector_pth:
             errors.append("bottom_nets: unstitched ground island")
+    for pad in connector_ground_pads:
+        if not design["ground_component"].intersects(pad.shape):
+            errors.append(f"J1 {pad.number} misses the original top ground plane")
     for x, y in design["ground_vias"]:
         if not design["ground_component"].contains(Point(x, y)):
             errors.append(f"ground via misses original top ground plane at {x:.4f},{y:.4f}")
@@ -1133,11 +1397,7 @@ def validate_design(design):
         if shape.buffer(CLEARANCE).intersects(design["signal_copper"]):
             errors.append(f"top_nets: {net} intersects original signal copper")
 
-    # Locating holes and ground vias may only touch the original ground plane.
-    for x, y in design["npth"]:
-        hole = circle_shape(x, y, 0.65 / 25.4)
-        if hole.intersects(design["signal_copper"]):
-            errors.append(f"J1 locating hole intersects signal copper at {x:.4f},{y:.4f}")
+    # Ground and signal vias may only touch their intended copper.
     for x, y in design["vias"]:
         if not (4.20 <= x <= 4.76 and 5.30 <= y <= 5.84):
             continue
@@ -1159,6 +1419,30 @@ def modify_drill(base_path: Path, output_path: Path, points: list[tuple[float, f
     insertion = [f"\n{tool}\n"]
     insertion.extend(f"X{round(x * 10000):06d}Y{round(y * 10000):06d}\n" for x, y in points)
     output_path.write_text(text[:marker] + "".join(insertion) + text[marker:])
+
+
+def read_excellon_holes(path: Path):
+    """Read the simple 2:4-inch Excellon form used by the source board."""
+    tools = {}
+    current_tool = None
+    holes = []
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.strip()
+        tool_definition = re.fullmatch(r"(T\d+)C([0-9.]+)", line)
+        if tool_definition:
+            tools[tool_definition.group(1)] = float(tool_definition.group(2))
+            continue
+        if re.fullmatch(r"T\d+", line):
+            current_tool = line
+            continue
+        coordinate = re.fullmatch(r"X(\d+)Y(\d+)", line)
+        if coordinate and current_tool in tools:
+            holes.append((
+                int(coordinate.group(1)) / 10000,
+                int(coordinate.group(2)) / 10000,
+                tools[current_tool],
+            ))
+    return holes
 
 
 def write_outputs(design):
@@ -1183,7 +1467,16 @@ def write_outputs(design):
     # This is intentionally more conservative than MacroFab Standard so
     # importer rounding cannot drop the reported clearance below 10 mil.
     source_outline_stroke = load_layer(BASE / "Gerber_BoardOutlineLayer.GKO")
-    edge_keepout = source_outline_stroke.buffer(EDGE_COPPER_CLEARANCE - 0.0050)
+    outer_edge_keepout = source_outline_stroke.buffer(EDGE_COPPER_CLEARANCE - 0.0050)
+    # MacroFab may treat NPTH drills as internal routed edges. Clear copper from
+    # every preserved mechanical hole as well as from the outside route so the
+    # uploaded Gerbers satisfy the same Standard copper-to-edge rule everywhere.
+    npth_holes = read_excellon_holes(BASE / "Drill_NPTH_Through.DRL")
+    npth_edge_keepout = unary_union([
+        circle_shape(x, y, diameter + 2 * EDGE_COPPER_CLEARANCE)
+        for x, y, diameter in npth_holes
+    ]).buffer(0)
+    edge_keepout = outer_edge_keepout.union(npth_edge_keepout).buffer(0)
 
     bottom_dark = unary_union(list(design["bottom_nets"].values())).difference(edge_keepout).buffer(0)
     top_dark = unary_union(list(design["top_nets"].values())).difference(edge_keepout).buffer(0)
@@ -1203,7 +1496,12 @@ def write_outputs(design):
     top_clear = unary_union([
         edge_keepout,
         design["top_repurpose_clear"],
-        *[shape.buffer(CLEARANCE + 0.0002) for shape in design["top_nets"].values()],
+        design["a_repurpose_clear"],
+        *[
+            shape.buffer(CLEARANCE + 0.0002)
+            for net, shape in design["top_nets"].items()
+            if net != "GND"
+        ],
     ]).buffer(0)
     append_overlay(BASE / "Gerber_TopLayer.GTL", OUT / "Gerber_TopLayer.GTL", top_clear, top_dark)
 
@@ -1212,12 +1510,7 @@ def write_outputs(design):
     paste_shapes = []
     for pad in design["pads"]:
         if pad.mask:
-            mask_shapes.append(box(
-                pad.x - pad.width / 2 - MASK_EXPAND,
-                pad.y - pad.height / 2 - MASK_EXPAND,
-                pad.x + pad.width / 2 + MASK_EXPAND,
-                pad.y + pad.height / 2 + MASK_EXPAND,
-            ))
+            mask_shapes.append(pad.shape.buffer(MASK_EXPAND, resolution=16))
         if pad.paste and pad.ref not in {"TP"}:
             paste_shapes.append(pad.shape)
     bottom_mask_dark = unary_union(mask_shapes).buffer(0)
@@ -1225,7 +1518,12 @@ def write_outputs(design):
     append_overlay(BASE / "Gerber_BottomSolderMaskLayer.GBS", OUT / "Gerber_BottomSolderMaskLayer.GBS", bottom_mask_clear, bottom_mask_dark)
 
     top_mask_clear = box(2.12, 4.13, 2.58, 4.75)
-    append_overlay(BASE / "Gerber_TopSolderMaskLayer.GTS", OUT / "Gerber_TopSolderMaskLayer.GTS", top_mask_clear, Polygon())
+    top_mask_dark = unary_union([
+        pad.shape.buffer(MASK_EXPAND, resolution=16)
+        for pad in design["pads"]
+        if pad.ref == "J1" and pad.through_hole and pad.mask
+    ]).buffer(0)
+    append_overlay(BASE / "Gerber_TopSolderMaskLayer.GTS", OUT / "Gerber_TopSolderMaskLayer.GTS", top_mask_clear, top_mask_dark)
 
     write_positive_layer(OUT / "Gerber_BottomPasteMaskLayer.GBP", "Bottom Paste", unary_union(paste_shapes).buffer(0))
     write_positive_layer(OUT / "Gerber_TopPasteMaskLayer.GTP", "Top Paste (intentionally empty)", Polygon())
@@ -1233,7 +1531,7 @@ def write_outputs(design):
     # New top silkscreen: intentionally sparse, high-contrast, and pixel-clean.
     top_silk = []
     top_silk.append(text_shape("SWANSONG USB", 2.67, 5.08, 0.62, "center"))
-    top_silk.append(text_shape("USB GAMEPAD - REV B", 2.67, 5.97, 0.22, "center"))
+    top_silk.append(text_shape("USB GAMEPAD - REV C", 2.67, 5.97, 0.22, "center"))
     labels = [
         ("Y1", 0.845, 5.86), ("Y2", 1.12, 5.59), ("Y3", 0.845, 5.31), ("Y4", 0.565, 5.59),
         ("X1", 0.845, 4.50), ("X2", 1.12, 4.23), ("X3", 0.845, 3.95), ("X4", 0.565, 4.23),
@@ -1246,7 +1544,7 @@ def write_outputs(design):
 
     bottom_silk = [
         text_shape("SWANSONG USB", 2.60, 5.95, 0.26, "center"),
-        text_shape("REV B", 2.60, 5.78, 0.18, "center"),
+        text_shape("REV C", 2.60, 5.78, 0.18, "center"),
         text_shape("FACTORY PROGRAMMED", 3.18, 5.45, 0.12, "center"),
         text_shape("USB HID GAMEPAD", 3.18, 5.30, 0.12, "center"),
         text_shape("USB-C", 4.82, 5.30, 0.12, "center"),
@@ -1254,12 +1552,9 @@ def write_outputs(design):
     ]
     write_positive_layer(OUT / "Gerber_BottomSilkscreenLayer.GBO", "Bottom Silkscreen", unary_union(bottom_silk).buffer(0))
 
-    # Add the connector's two non-plated locating pegs and all new 0.30 mm vias.
-    modify_drill(BASE / "Drill_NPTH_Through.DRL", OUT / "Drill_NPTH_Through.DRL", design["npth"], "T04")
-    # The new NPTH diameter needs its own tool declaration.
-    npth_text = (OUT / "Drill_NPTH_Through.DRL").read_text()
-    npth_text = npth_text.replace("%\nG05", ";Holesize 4 = 0.0256 inch\nT04C0.0256\n%\nG05")
-    (OUT / "Drill_NPTH_Through.DRL").write_text(npth_text)
+    # Keep the source board's true non-plated mechanical holes unchanged. The
+    # USB4085 has no plastic locating pegs; all 20 connector holes are plated.
+    shutil.copy2(BASE / "Drill_NPTH_Through.DRL", OUT / "Drill_NPTH_Through.DRL")
     # EasyEDA exported two byte-identical plated drill files with different
     # comments. Emit one canonical file so importers do not show duplicate hits.
     for source_name in ("Drill_PTH_Through.DRL",):
@@ -1271,6 +1566,20 @@ def write_outputs(design):
         drill_text = drill_text.replace(
             "%\nG05",
             f";Holesize 2 = {SMALL_VIA_DRILL:.4f} inch\nT02C{SMALL_VIA_DRILL:.4f}\n%\nG05",
+        )
+        output_path.write_text(drill_text)
+        modify_drill(output_path, output_path, design["j1_pin_holes"], "T04")
+        modify_drill(output_path, output_path, design["j1_rear_shell_holes"], "T05")
+        modify_drill(output_path, output_path, design["j1_front_shell_holes"], "T06")
+        drill_text = output_path.read_text()
+        drill_text = drill_text.replace(
+            "%\nG05",
+            f";Holesize 4 = {USB_PIN_DRILL:.4f} inch\n"
+            f"T04C{USB_PIN_DRILL:.4f}\n"
+            f";Holesize 5 = {USB_REAR_SHELL_DRILL:.4f} inch\n"
+            f"T05C{USB_REAR_SHELL_DRILL:.4f}\n"
+            f";Holesize 6 = {USB_FRONT_SHELL_DRILL:.4f} inch\n"
+            f"T06C{USB_FRONT_SHELL_DRILL:.4f}\n%\nG05",
         )
         output_path.write_text(drill_text)
 
@@ -1292,11 +1601,11 @@ def write_outputs(design):
         key = (placement.mpn, placement.value, placement.package)
         quantities.setdefault(key, []).append(placement.ref)
     with (PROJECT / "swansong-usb-bom.csv").open("w", newline="") as handle:
-        writer = csv.writer(handle)
+        writer = csv.writer(handle, lineterminator="\n")
         writer.writerow(["Quantity", "Designators", "Manufacturer Part Number", "Description", "Package", "Manufacturer"])
         manufacturer = {
             "PIC16F1459-I/SO": "Microchip Technology",
-            "USB4110-GF-A": "GCT",
+            "USB4085-GF-A": "GCT",
             "746X101103JP": "CTS Resistor Products",
             "CC0402KRX5R5BB474": "Yageo",
         }
@@ -1306,10 +1615,10 @@ def write_outputs(design):
 
     manifest = {
         "product": "SwanSong USB",
-        "revision": "B",
+        "revision": "C",
         "architecture": "PIC16F1459 crystal-free native USB, USB-C device",
         "placements": len(design["placements"]),
-        "assembly_side": "Bottom only",
+        "assembly_side": "Bottom SMT plus one PTH USB-C connector",
         "button_inputs": {net: {"former_module_pad": endpoint, "pic_pin": pin} for endpoint, (net, pin) in design["controls"].items()},
         "top_routes": design["top_paths"],
     }

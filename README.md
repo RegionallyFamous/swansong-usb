@@ -1,4 +1,4 @@
-# SwanSong USB Rev B
+# SwanSong USB Rev C
 
 SwanSong USB is a turnkey USB-C gamepad conversion of the published SwanTroller
 PCB. It preserves the board outline, mounting holes, membrane contacts, and
@@ -9,7 +9,7 @@ PIC16F1459 SOIC circuit that MacroFab can source, program, and assemble.
 
 ## Manufacturing summary
 
-- Two-layer PCB, bottom-side SMT assembly only
+- Two-layer PCB, bottom-side SMT assembly plus one through-hole USB-C connector
 - 9 machine placements, 7 unique BOM lines
 - USB-C receptacle is assembled by MacroFab
 - USB-C mating face is centered in the WonderSwan Color right-side accessory/
@@ -18,7 +18,10 @@ PIC16F1459 SOIC circuit that MacroFab can source, program, and assemble.
 - A normal USB-C data cable is the only external cable required
 - Crystal-free full-speed USB; no oscillator or plug-in MCU board
 - MacroFab Standard rules: 10 mil minimum plated drill, 5 mil trace/spacing,
-  and a conservative 16 mil copper-to-route-centerline keepout
+  and a conservative 16 mil copper keepout from the outer route and all nine
+  preserved non-plated mechanical-hole edges
+- Stocked GCT `USB4085-GF-A` connector has no plastic locating pegs; its 16
+  contacts and four shell stakes are ordinary plated holes
 - Exposed VPP, PGC/B, and PGD/A factory-programming contacts
 
 ## Files for MacroFab
@@ -47,8 +50,8 @@ The generator validates same-layer copper clearance, net continuity, via
 stitching, preserved top-copper conflicts, connector-body interference, and the
 USB-C mating-face position before it writes the manufacturing package.
 
-The reviewed Rev B board renders are in `review-renders/top-rev-b.png` and
-`review-renders/bottom-rev-b.png` (the bottom render is mirrored as viewed from
+The reviewed Rev C board renders are in `review-renders/top-rev-c.png` and
+`review-renders/bottom-rev-c.png` (the bottom render is mirrored as viewed from
 the assembly side).
 
 ## Origin and license
