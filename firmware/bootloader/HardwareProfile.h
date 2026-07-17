@@ -1,0 +1,20 @@
+#ifndef HARDWARE_PROFILE_SWANSONG_BOOTLOADER_H
+#define HARDWARE_PROFILE_SWANSONG_BOOTLOADER_H
+
+#define USE_INTERNAL_OSC
+#define DEMO_BOARD PIC16F1_LPC_USB_DEVELOPMENT_KIT
+#define PIC16F1_LPC_USB_DEVELOPMENT_KIT
+#define CLOCK_FREQ 48000000UL
+#define _XTAL_FREQ 48000000UL
+
+#define self_power 0
+#define USB_BUS_SENSE 1
+
+#define INPUT_PIN 1
+#define OUTPUT_PIN 0
+
+/* Active-low recovery chord: hold Start + Power while connecting USB. */
+#define BOOT_BUTTON_START PORTBbits.RB4
+#define BOOT_BUTTON_POWER PORTCbits.RC2
+
+#endif

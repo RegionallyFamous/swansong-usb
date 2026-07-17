@@ -12,8 +12,11 @@ Project: SwanSong USB — Rev D
 8. Confirm TC1 is DNL: it must not appear as a BOM or placement item and must receive no solder paste. Its six exposed bottom pads and three asymmetric alignment holes are the solderless ICSP interface.
 9. Before ordering, visually verify the bottom-side placement and rotation of J1 (USB-C), U1, RN1, and RN2. J1's mating face must project slightly into the center of the right-side accessory/headphone-adapter recess.
 
-The firmware in the programming package is suitable for prototypes. It currently uses Microchip's development VID/PID `04D8:005E`; obtain an assigned production PID before commercial release.
+The firmware package contains the combined protected bootloader and gamepad
+image. It uses Microchip's development VID with gamepad PID `005E` and updater
+PID `005F`; obtain assigned production values before commercial release.
 
-The current HEX is not yet the combined USB-bootloader image. Do not order a
-batch advertised as USB-updatable until the combined image has been created and
-tested on a physical Rev D prototype.
+The combined image passes compiler, memory-boundary, configuration-word,
+read-back-protocol, and CRC tests. Electrically qualify USB gamepad and update/
+recovery behavior on an assembled Rev D prototype before releasing production
+quantity.

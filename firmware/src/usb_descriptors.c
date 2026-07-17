@@ -279,6 +279,13 @@ ROM struct{BYTE report[HID_RPT01_SIZE];}hid_rpt01={{
   0x75,0x04,        //   REPORT_SIZE (4)
   0x95,0x01,        //   REPORT_COUNT (1)
   0x81,0x03,        //   INPUT (Const,Var,Abs)
+  0x06,0x00,0xFF,   //   USAGE_PAGE (Vendor Defined)
+  0x09,0x01,        //   USAGE (Firmware Update)
+  0x15,0x00,        //   LOGICAL_MINIMUM (0)
+  0x26,0xFF,0x00,   //   LOGICAL_MAXIMUM (255)
+  0x75,0x08,        //   REPORT_SIZE (8)
+  0x95,0x08,        //   REPORT_COUNT (8)
+  0xB1,0x02,        //   FEATURE (Data,Var,Abs)
   0xC0              // END_COLLECTION
 }
 };

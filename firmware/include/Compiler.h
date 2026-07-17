@@ -170,16 +170,16 @@
 	#if defined(COMPILER_HITECH_PICC18) || defined(COMPILER_HITECH_PICC)
 	    #define ROM                 	const
 		#define rom
-        #ifndef Nop()
+        #ifndef Nop
         #define Nop()               	asm("NOP");
         #endif
-        #ifndef ClrWdt()
+        #ifndef ClrWdt
         #define ClrWdt()				asm("CLRWDT");
         #endif
-        #ifndef Reset()
+        #ifndef Reset
         #define Reset()					asm("RESET");
         #endif
-        #ifndef Sleep()
+        #ifndef Sleep
         #define Sleep()					asm("SLEEP");
         #endif
 	#endif

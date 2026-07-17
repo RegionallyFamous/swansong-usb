@@ -8,6 +8,9 @@ outputs/
 # Keep the programmed factory image, not compiler intermediates.
 firmware/build/*
 !firmware/build/swansong-usb.hex
+!firmware/build/swansong-usb-app.hex
+!firmware/build/swansong-usb-bootloader.hex
+!firmware/build/swansong-usb-factory.hex
 
 # The local Microchip framework bundle is large; retain only headers used by
 # this firmware target (see the checked-in dependency list in the Makefile).

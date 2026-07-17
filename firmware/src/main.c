@@ -49,6 +49,7 @@
 #include "./USB/usb.h"
 #include "HardwareProfile.h"
 #include "./USB/usb_function_hid.h"
+#include "../common/swansong_update.h"
 
 /** CONFIGURATION **************************************************/
 #if defined(PICDEM_FS_USB)      // Configuration bits for PICDEM FS USB Demo Board (based on PIC18F4550)
@@ -218,6 +219,7 @@
         #pragma config EBTRB  = OFF        
 
 #elif	defined(PIC16F1_LPC_USB_DEVELOPMENT_KIT)
+#if !defined(SWANSONG_BOOTLOADED_APPLICATION)
     /* Crystal-free 16 MHz HFINTOSC x3 = 48 MHz. High-voltage ICSP remains
        available at the VPP test pad even though MCLR is disabled at runtime. */
     #pragma config FOSC = INTOSC, WDTE = OFF, PWRTE = ON, MCLRE = OFF
@@ -225,6 +227,7 @@
     #pragma config WRT = OFF, CPUDIV = NOCLKDIV, USBLSCLK = 48MHz
     #pragma config PLLMULT = 3x, PLLEN = ENABLED, STVREN = ON
     #pragma config BORV = LO, LPBOR = OFF, LVP = OFF
+#endif
 
 #elif defined(EXPLORER_16)
     #if defined(__PIC24FJ256GB110__)
@@ -309,6 +312,8 @@ void YourHighPriorityISRCode();
 void YourLowPriorityISRCode();
 void USBCBSendResume(void);
 void Joystick(void);
+void SwanSongSetReportHandler(void);
+void SwanSongSetReportComplete(void);
 
 /** DECLARATIONS ***************************************************/
 //http://www.microsoft.com/whdc/archive/hidgame.mspx
@@ -342,6 +347,8 @@ USB_HANDLE lastTransmission;
 volatile BYTE sofTick;
 BYTE debounceCount[13];
 WORD stableButtons;
+volatile BYTE bootResetCountdown;
+BYTE bootFeatureReport[SWANSONG_ENTER_REPORT_SIZE] __at(0x2060);
 
 #if defined(__18CXX)
     #pragma udata
@@ -852,6 +859,7 @@ void UserInit(void)
     }
     stableButtons = 0;
     sofTick = 0;
+    bootResetCountdown = 0;
     joystick_input.val[0] = 0;
     joystick_input.val[1] = 0;
     joystick_input.val[2] = HAT_SWITCH_NULL;
@@ -885,6 +893,11 @@ void ProcessIO(void)
 {   
     //Blink the LEDs according to the USB device status
     BlinkUSBStatus();
+
+    if(bootResetCountdown == 1u)
+    {
+        Reset();
+    }
 
     // User Application USB tasks
     if((USBDeviceState < CONFIGURED_STATE)||(USBSuspendControl==1)) return;
@@ -1396,6 +1409,39 @@ void USBCB_SOF_Handler(void)
     // No need to clear UIRbits.SOFIF to 0 here.
     // Callback caller is already doing that.
     sofTick = 1;
+    if(bootResetCountdown > 1u)
+    {
+        bootResetCountdown--;
+    }
+}
+
+/* The updater uses a feature report so it can switch from gamepad mode to the
+   bootloader without a special driver or any soldering/programmer hardware. */
+void SwanSongSetReportHandler(void)
+{
+    if(SetupPkt.wLength == SWANSONG_ENTER_REPORT_SIZE)
+    {
+        USBEP0Receive(bootFeatureReport, SWANSONG_ENTER_REPORT_SIZE,
+            SwanSongSetReportComplete);
+    }
+}
+
+void SwanSongSetReportComplete(void)
+{
+    static const BYTE enterReport[SWANSONG_ENTER_REPORT_SIZE] = {
+        0x53, 0x53, 0x55, 0x50, 0x01, 0x42, 0x4C, 0xA5
+    };
+    BYTE i;
+
+    for(i = 0; i < SWANSONG_ENTER_REPORT_SIZE; i++)
+    {
+        if(bootFeatureReport[i] != enterReport[i])
+        {
+            return;
+        }
+    }
+    /* Wait for 25 SOFs so the feature-report status stage reaches the host. */
+    bootResetCountdown = 25u;
 }
 
 /*******************************************************************
