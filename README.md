@@ -90,6 +90,45 @@ words, write protection, reset vectors, image merging, and CRC. It still needs
 final electrical/USB testing on an assembled Rev D prototype before a production
 quantity is released; a compiler and image validator cannot replace that test.
 
+### SwanSong Studio hardware contract
+
+`tools/swansong_usb_studio.py` is the stable, JSON-only integration boundary
+for SwanSong Studio and automated hardware QA. Its read-only commands validate
+the exact update image, enumerate the controller without exposing its HID path,
+and produce a content-bound update plan:
+
+```sh
+.venv/bin/python tools/swansong_usb_studio.py doctor \
+  firmware/build/swansong-usb-app.hex
+.venv/bin/python tools/swansong_usb_studio.py plan-update \
+  firmware/build/swansong-usb-app.hex --version 1.0
+```
+
+Installation refuses to touch hardware unless the caller repeats the selected
+image's complete SHA-256 and explicitly accepts the controller reset. The
+bootloader still performs erase, complete read-back, CRC, atomic validity, and
+recovery checks:
+
+```sh
+.venv/bin/python tools/swansong_usb_studio.py install \
+  firmware/build/swansong-usb-app.hex --version 1.0 \
+  --confirm-sha256 SHA256_FROM_PLAN --accept-device-reset
+```
+
+An assembled controller can be exercised with `hardware-qa`. It consumes a
+bounded number of ordinary three-byte HID reports and passes only after neutral
+plus every requested direction and button have actually been observed. It does
+not synthesize input or infer a pass from device enumeration:
+
+```sh
+.venv/bin/python tools/swansong_usb_studio.py hardware-qa
+```
+
+All four commands return versioned deterministic JSON suitable for the Desktop
+UI, CI artifact retention, and a future physical-hardware compatibility record.
+The engineering VID/PID remains an explicit warning and blocks a commercial
+production release until an owned USB identity is assigned.
+
 ## USB identity blocker
 
 The engineering HEX uses Microchip's demo USB identity. Prototypes can be built
