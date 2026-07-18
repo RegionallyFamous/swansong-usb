@@ -1,0 +1,31 @@
+name: Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile Python contracts
+        run: python3 -m py_compile tools/swansong_firmware.py tools/swansong_usb_update.py tools/swansong_usb_studio.py
+      - name: Test firmware images, updater, Studio contract, and hardware QA decoder
+        run: make -C firmware test
+      - name: Exercise offline Studio Doctor
+        run: |
+          set +e
+          python3 tools/swansong_usb_studio.py doctor firmware/build/swansong-usb-app.hex > doctor.json
+          status=$?
+          set -e
+          test "$status" -eq 1
+          python3 -c 'import json; report=json.load(open("doctor.json")); assert report["schema"] == "swansong-usb-doctor-v1"; assert report["image"]["programmedWords"] > 0'
